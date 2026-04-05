@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "crimsonscanweb",
+  "private_key_id": "3b4d5d01761973f6a74ae7ccd6adb648041ffc3a",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC6PHLFKWv5QJrp\nks4gfcvyyDomwzBp4elhiEvRR3U6rs2ZAbgueE/1BC9zNCxUJXXvlSykMIDaYHLb\nH1nqdYMH3qo7n+GmTDJ5p/nhvvFQ07XZqtsRPVFh5vgAXDi0Vz8UvcDW7MWLO3bO\nKKjzf5DllmfLi8Py7sPeOZF0qcK2WP2MOyXuMhqz67vfv4KWW6E0cdxEfTlmEx4y\nvp77DVMl/kY8bOaiSW8xZtrSQ8KS/v7qtHWqgh9n1Qvdabg7Bc1Vc7cN60cI3YSz\nB87jgFoPMg6QJELX7MuCX1PMWT7h8W9b9ZJy5wRvmP0Di/JMcUTjqNDP52UWM3gQ\nZwCw2QmTAgMBAAECggEALT1h4+McB4BaIUM4L0xfrqpU9fWUXSQzvS2OvVfOcmLk\nLrbsNt2jDrHllOanngk7jOd/4KKnqmSjgfcrsHi7S74bPECqX+tCl6rmWKA5npjP\nJAENFjL/AflJZU0BuU04VaGCprL9icT4JzxZTk0+tYbDz/4zq1+01NbHLr/OPN0W\n4ByNZdfeZ64NXw23Yjq3gZCcIGYZLPluioiYOqNwiNvu5MK+G2aS/hRPsbWiYEQX\nAHV6TfEC+0XWf1wvvqOCqa7D2r0dKd/1O5gyuiPxpBnvt6rKD02yK6OZdyPPJP/5\nDJ1Y1B9mqJFCadPXa3wksu6556EB/5bx1UaQ4+ZIgQKBgQDqfa1cOmVn1/wU1KEv\nZ22TptYuLNGjeTTs4Ak5HLkgueaZHoeEfGlWtmV7QL6V7rcX4lroCQsjBNuDhTQX\neemnVloLmFfHEUxPyO12zxUY3VNc2YFKMXcCRSDoJMccLNFELJNRodG5AAtprtSD\nqR11bfgyZymg3DomEcGnO0OYhQKBgQDLUaaHBtGEz+aQ9p1SJ7EtQlmYNPcS6sSJ\nQFOVq/hsXwcV0jo95oH0YrP3RUcaR43Ee6u2Ohxn/foEyaEwJWY52kkM0WlvY2qg\nyfvBA9hpdZt7JJYURl4Xj71wHO/xrnNNt2KuI8wNTTTkdIT75ioghRJwQK+33fqV\nduu/LSvBNwKBgQCGKuaYUKlY41HOsWKQdwNRajI+NVK10FIh/oYIcZDTUsrIbZlo\niq7S+IXUIdVqgC2usssE3LfMj6jx9bM6g3zXTCc1XzNKKXGabQLB6fbORUS/aYv6\nYZcQa3FKolBypIoQEdkw6f/PdGETVP8vXgIHAKb0X+aHrbpvsdU11Ej26QKBgHTg\nySQR7Vu1z8tBmYpiut1TqQFwYSAEyVpFGkeOBk72CbKnmUeAPPBp1R6uOoOG4p4y\nobEtkqrNO26JIhn1ReC39QpjT4Ly2Zb4xbpdJYjqTKjrjUK2eNx+it3qJJ0ANdRV\nOWr1tRVobqFtwgy0cT8kgEb7SIggGS7WoArUQrTdAoGAGeWd1aQzQaYLYmp37175\nNh7YDAf/EnmcdF++z8M5PSUK9q2jzqpYjH9x+E65mMI1p5AiVeSNfC8K51oscVq3\noInIognqYD9GV2vjT+oYOxj/vi426j6wC6NT71Px5w0xOnGHzr74mJSJwtWD/AZL\n+3DQS37Ma1uWZxFzdrGfwNc=\n-----END PRIVATE KEY-----\n",
+  "client_email": "bot-crimson@crimsonscanweb.iam.gserviceaccount.com",
+  "client_id": "105725529857646157155",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/bot-crimson%40crimsonscanweb.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
