@@ -1,8 +1,9 @@
 import discord
 from discord.ext import commands, tasks
-import json
 import os
 import re
+
+import db_mysql as db
 import asyncio
 import logging
 import gspread
@@ -29,12 +30,9 @@ intents.members = True
 bot = commands.Bot(command_prefix='cd!', intents=intents, help_command=None)
 
 COLOR_CRIMSON = 0x660000
-DATA_FILE = "database_crimson.json"
 
-# ID del canal donde se envían alertas de retraso (opcional, configurable con cd!set_canal)
 CANAL_ALERTAS_ID = int(os.getenv("CANAL_ALERTAS_ID", "0")) or None
 
-# Mapeo: Etapa del formulario → Rol en el bot
 ETAPA_ROL_MAP = {
     "raws":          "Cleaner",
     "limpieza":      "Cleaner",
@@ -59,7 +57,6 @@ SHEET_ID        = os.getenv("GOOGLE_SHEET_ID")
 CREDS_FILE      = os.getenv("CREDENCIALES_JSON", "credenciales.json")
 CARPETA_RAIZ_ID = os.getenv("CARPETA_RAIZ_ID", "")
 
-# Subcarpetas que se crean en cada proyecto nuevo (igual que en el Apps Script)
 SUBCARPETAS_PROYECTO = [
     "01. RAWs",
     "02. Traducción",
@@ -69,7 +66,6 @@ SUBCARPETAS_PROYECTO = [
     "06. Listo para Subir"
 ]
 
-# Qué subcarpeta corresponde a cada rol al asignar capítulo
 ROL_ETAPA_DRIVE = {
     "Traductor":   "02. Traducción",
     "Cleaner":     "01. RAWs",
@@ -78,15 +74,14 @@ ROL_ETAPA_DRIVE = {
 }
 
 sheet_client      = None
-hoja_asignaciones = None   # Pestaña "Asignaciones"
-hoja_ranking      = None   # Pestaña "Ranking"
-hoja_formulario   = None   # Pestaña "Respuestas de formulario 1"
-drive_service     = None   # Google Drive API
+hoja_asignaciones = None
+hoja_ranking      = None
+hoja_formulario   = None
+drive_service     = None
 
-# ── Google Drive API ─────────────────────────────────────────────────────────
+# ── Google Drive API ──────────────────────────────────────────────────────────
 
 def conectar_drive():
-    """Conecta el cliente de la API de Google Drive."""
     global drive_service
     try:
         creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
@@ -98,12 +93,8 @@ def conectar_drive():
         return False
 
 def drive_buscar_o_crear_carpeta(nombre, padre_id):
-    """
-    Busca una carpeta por nombre dentro de padre_id.
-    Si no existe, la crea. Retorna el ID de la carpeta.
-    """
     try:
-        nombre_escaped = nombre.replace("'", "\\'")  # Escapar comillas
+        nombre_escaped = nombre.replace("'", "\\'")
         query = (
             f"name='{nombre_escaped}' and "
             f"'{padre_id}' in parents and "
@@ -113,8 +104,7 @@ def drive_buscar_o_crear_carpeta(nombre, padre_id):
         results = drive_service.files().list(q=query, fields="files(id)").execute()
         items = results.get("files", [])
         if items:
-            return items[0]["id"]   # Ya existe
-        # Crear nueva carpeta
+            return items[0]["id"]
         metadata = {
             "name": nombre,
             "mimeType": "application/vnd.google-apps.folder",
@@ -127,11 +117,6 @@ def drive_buscar_o_crear_carpeta(nombre, padre_id):
         return None
 
 def drive_crear_proyecto(nombre_proyecto):
-    """
-    Crea la carpeta del proyecto con sus 6 subcarpetas en Drive.
-    Equivalente a crearNuevoProyecto() del Apps Script.
-    Retorna (exito: bool, mensaje: str).
-    """
     if not drive_service or not CARPETA_RAIZ_ID:
         return False, "Drive no conectado o CARPETA_RAIZ_ID vacío."
     try:
@@ -144,7 +129,61 @@ def drive_crear_proyecto(nombre_proyecto):
     except Exception as e:
         return False, str(e)
 
-# ─────────────────────────────────────────────────────────────────────────────
+def drive_listar_proyectos():
+    if not drive_service or not CARPETA_RAIZ_ID:
+        return None, "Drive no conectado."
+    try:
+        query = (
+            f"'{CARPETA_RAIZ_ID}' in parents and "
+            f"mimeType='application/vnd.google-apps.folder' and "
+            f"trashed=false"
+        )
+        results = drive_service.files().list(
+            q=query, fields="files(id, name)", orderBy="name"
+        ).execute()
+        return results.get("files", []), None
+    except Exception as e:
+        return None, str(e)
+
+def drive_listar_capitulos(proyecto_nombre):
+    if not drive_service or not CARPETA_RAIZ_ID:
+        return None, "Drive no conectado."
+    try:
+        query = (
+            f"name='{proyecto_nombre.replace(chr(39), chr(92)+chr(39))}' and "
+            f"'{CARPETA_RAIZ_ID}' in parents and "
+            f"mimeType='application/vnd.google-apps.folder' and trashed=false"
+        )
+        res = drive_service.files().list(q=query, fields="files(id,name)").execute()
+        items = res.get("files", [])
+        if not items:
+            return None, f"No se encontró la carpeta `{proyecto_nombre}` en Drive."
+        proyecto_id = items[0]["id"]
+
+        sub_query = (
+            f"'{proyecto_id}' in parents and "
+            f"mimeType='application/vnd.google-apps.folder' and trashed=false"
+        )
+        etapas = drive_service.files().list(
+            q=sub_query, fields="files(id,name)", orderBy="name"
+        ).execute().get("files", [])
+
+        resumen = {}
+        for etapa in etapas:
+            cap_query = (
+                f"'{etapa['id']}' in parents and "
+                f"mimeType='application/vnd.google-apps.folder' and trashed=false"
+            )
+            caps = drive_service.files().list(
+                q=cap_query, fields="files(name)", orderBy="name"
+            ).execute().get("files", [])
+            if caps:
+                resumen[etapa["name"]] = [c["name"] for c in caps]
+        return resumen, None
+    except Exception as e:
+        return None, str(e)
+
+# ── Google Sheets ─────────────────────────────────────────────────────────────
 
 def conectar_sheets():
     global sheet_client, hoja_asignaciones, hoja_ranking, hoja_formulario
@@ -153,31 +192,28 @@ def conectar_sheets():
         sheet_client = gspread.authorize(creds)
         spreadsheet = sheet_client.open_by_key(SHEET_ID)
 
-        # ── Respuestas de formulario (sólo lectura) ──────────────────────────
         try:
             hoja_formulario = spreadsheet.worksheet("Respuestas de formulario 1")
             log.info("Pestaña 'Respuestas de formulario 1' conectada.")
         except gspread.WorksheetNotFound:
-            log.warning("⚠️ No se encontró 'Respuestas de formulario 1'. Revisa el nombre exacto.")
+            log.warning("⚠️ No se encontró 'Respuestas de formulario 1'.")
 
-        # ── Asignaciones ─────────────────────────────────────────────────────
         try:
             hoja_asignaciones = spreadsheet.worksheet("Asignaciones")
         except gspread.WorksheetNotFound:
             hoja_asignaciones = spreadsheet.add_worksheet("Asignaciones", rows=1000, cols=10)
             hoja_asignaciones.append_row([
-                "ID Tarea","Discord ID","Nombre","Obra",
-                "Capítulo","Rol","Fecha Asignación","Fecha Límite",
-                "Estado","Fecha Entrega"
+                "ID Tarea", "Discord ID", "Nombre", "Obra",
+                "Capítulo", "Rol", "Fecha Asignación", "Fecha Límite",
+                "Estado", "Fecha Entrega"
             ])
             log.info("Pestaña 'Asignaciones' creada.")
 
-        # ── Ranking ───────────────────────────────────────────────────────────
         try:
             hoja_ranking = spreadsheet.worksheet("Ranking")
         except gspread.WorksheetNotFound:
             hoja_ranking = spreadsheet.add_worksheet("Ranking", rows=500, cols=4)
-            hoja_ranking.append_row(["Discord ID","Nombre","Caps Entregados","Último Activo"])
+            hoja_ranking.append_row(["Discord ID", "Nombre", "Caps Entregados", "Último Activo"])
             log.info("Pestaña 'Ranking' creada.")
 
         log.info("✅ Google Sheets conectado correctamente.")
@@ -185,8 +221,6 @@ def conectar_sheets():
     except Exception as e:
         log.error(f"❌ Error conectando Sheets: {e}")
         return False
-
-# ── Funciones de escritura en Sheets ─────────────────────────────────────────
 
 def sheets_agregar_asignacion(tid, user, obra, cap, rol, limite):
     if not hoja_asignaciones: return
@@ -220,7 +254,6 @@ def sheets_marcar_retrasado(tid):
         log.error(f"[Sheets] marcar_retrasado (TID={tid}): {e}")
 
 def sheets_marcar_cancelado(tid):
-    """Marca una tarea como Cancelada en la hoja Asignaciones."""
     if not hoja_asignaciones: return
     try:
         celda = hoja_asignaciones.find(tid, in_column=1)
@@ -231,13 +264,12 @@ def sheets_marcar_cancelado(tid):
         log.error(f"[Sheets] marcar_cancelado (TID={tid}): {e}")
 
 def sheets_actualizar_ranking(user_id, nombre, puntos_totales):
-    """Actualiza o crea la fila del miembro en Ranking. Usa col_values para evitar bug de gspread 6."""
     if not hoja_ranking: return
     try:
-        ids_existentes = hoja_ranking.col_values(1)  # Lista de todos los Discord IDs en col A
+        ids_existentes = hoja_ranking.col_values(1)
         uid_str = str(user_id)
         if uid_str in ids_existentes:
-            fila = ids_existentes.index(uid_str) + 1  # +1 porque las listas son 0-indexed pero Sheets 1-indexed
+            fila = ids_existentes.index(uid_str) + 1
             hoja_ranking.update_cell(fila, 2, nombre)
             hoja_ranking.update_cell(fila, 3, puntos_totales)
             hoja_ranking.update_cell(fila, 4, datetime.now().strftime("%m/%Y"))
@@ -245,12 +277,8 @@ def sheets_actualizar_ranking(user_id, nombre, puntos_totales):
             hoja_ranking.append_row([uid_str, nombre, puntos_totales, datetime.now().strftime("%m/%Y")])
     except Exception as e:
         log.error(f"[Sheets] actualizar_ranking: {e}")
+
 def sheets_leer_resumen():
-    """
-    Lee toda la hoja Asignaciones y devuelve un resumen agrupado por obra.
-    Retorna: (dict, error)
-    dict = {"OBRA": {"total": N, "entregado": N, "retrasado": N, "pendiente": N}}
-    """
     if not hoja_asignaciones:
         return None, "Sheets no conectado"
     try:
@@ -279,30 +307,8 @@ def sheets_leer_resumen():
         log.error(f"[Sheets] leer_resumen: {e}")
         return None, str(e)
 
-def sheets_leer_ranking_completo():
-    """Lee la hoja Ranking y devuelve lista de (nombre, puntos) ordenada."""
-    if not hoja_ranking:
-        return [], None
-    try:
-        filas = hoja_ranking.get_all_values()
-        if len(filas) <= 1:
-            return [], None
-        result = []
-        for fila in filas[1:]:
-            if len(fila) >= 3 and fila[2].isdigit():
-                result.append({"nombre": fila[1], "puntos": int(fila[2])})
-        result.sort(key=lambda x: x["puntos"], reverse=True)
-        return result, None
-    except Exception as e:
-        return [], str(e)
-
-
 def sheets_marcar_todos_historicos():
-    """
-    Se llama UNA SOLA VEZ al inicio si procesados_formulario está vacío.
-    Lee todos los timestamps existentes en el formulario y los marca como procesados
-    SIN intentar emparejarlos (son registros históricos anteriores al bot).
-    """
+    """Marca todos los timestamps del formulario como procesados en MySQL."""
     if not hoja_formulario: return
     try:
         all_values = hoja_formulario.get_all_values()
@@ -310,121 +316,82 @@ def sheets_marcar_todos_historicos():
         headers = all_values[0]
         timestamp_col = next((i for i, h in enumerate(headers) if h == "Marca temporal"), None)
         if timestamp_col is None: return
+        timestamps = []
         for row in all_values[1:]:
             ts = row[timestamp_col].strip() if timestamp_col < len(row) else ""
-            if ts and ts not in datos["procesados_formulario"]:
-                datos["procesados_formulario"].append(ts)
-        guardar_db()
-        log.info(f"[Form] Historial marcado: {len(datos['procesados_formulario'])} registros anteriores ignorados.")
+            if ts:
+                timestamps.append(ts)
+        if timestamps:
+            db.formularios_marcar_todos(timestamps)
+        log.info(f"[Form] Historial marcado: {len(timestamps)} registros anteriores ignorados.")
     except Exception as e:
         log.error(f"[Sheets] marcar_historicos: {e}")
 
 def sheets_leer_formulario_nuevas():
-    """
-    Lee el formulario usando get_all_values() para evitar el error de
-    cabeceras duplicadas que tiene get_all_records().
-    Retorna sólo las filas NO procesadas aún.
-    """
+    """Lee el formulario y retorna solo las filas NO procesadas en MySQL."""
     if not hoja_formulario: return []
     try:
         all_values = hoja_formulario.get_all_values()
         if len(all_values) < 2:
-            return []   # Sin datos
-
-        headers   = all_values[0]   # Fila 1 = encabezados
-        procesados = set(datos.get("procesados_formulario", []))
+            return []
+        headers = all_values[0]
         nuevas = []
-
         for row in all_values[1:]:
-            # Construir dict manualmente, ignorando duplicados de columna
             registro = {}
             for i, header in enumerate(headers):
-                if header and header not in registro:   # Toma sólo la primera ocurrencia
+                if header and header not in registro:
                     registro[header] = row[i] if i < len(row) else ""
-
             timestamp = str(registro.get("Marca temporal", "")).strip()
-            if timestamp and timestamp not in procesados:
+            if timestamp and not db.formulario_ya_procesado(timestamp):
                 nuevas.append(registro)
-
         return nuevas
     except Exception as e:
         log.error(f"[Sheets] leer_formulario: {e}")
         return []
 
-# --- BASE DE DATOS LOCAL (caché rápido) ──────────────────────────────────────
 
-datos = {
-    "config":                {"canal_anuncios": None, "rol_staff": None, "canal_alertas": None},
-    "tareas":                {},
-    "series":                {},
-    "expedientes":           {},
-    "errores_hist":          {},
-    "correcciones":          {},
-    "staff":                 {},   # {discord_id: {"usuario_form": "nvto", ...}}
-    "usuario_form_map":      {},   # {"nvto": discord_id}  ← enlace formulario ↔ Discord
-    "procesados_formulario": [],   # timestamps ya leídos del formulario
-    "mes_actual":            datetime.now().month
-}
-
-def guardar_db():
-    try:
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(datos, f, indent=4, ensure_ascii=False)
-    except Exception as e:
-        log.error(f"guardar_db: {e}")
-
-def cargar_db():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                cargado = json.load(f)
-                for key in cargado:
-                    if key in datos:
-                        datos[key] = cargado[key]
-            log.info("Base de datos cargada.")
-        except Exception as e:
-            log.error(f"cargar_db: {e}")
-
-cargar_db()
 sheets_ok = conectar_sheets()
-drive_ok  = conectar_drive()   # ← Google Drive API
+drive_ok  = conectar_drive()
 
-# Si es la primera vez que corre el bot, marcar historial del formulario como ya procesado
-if sheets_ok and len(datos["procesados_formulario"]) == 0:
+# Primera ejecución: marcar historial del formulario para no reprocesarlo
+if sheets_ok and not db.formulario_ya_procesado("__init__"):
     log.info("[Form] Primera ejecución detectada — marcando historial como procesado...")
     sheets_marcar_todos_historicos()
+    db.formulario_marcar("__init__")
+
 
 @bot.event
 async def on_ready():
+    global CANAL_ALERTAS_ID
     if not monitor_tiempos.is_running():
         monitor_tiempos.start()
     if not recordatorio_diario.is_running():
         recordatorio_diario.start()
+
+    canal_db = db.config_get("canal_alertas", "0")
+    if canal_db and canal_db != "0":
+        CANAL_ALERTAS_ID = int(canal_db)
+
     estado_s = "✅ Sheets OK"  if sheets_ok else "⚠️ Sheets SIN conexión"
     estado_d = "✅ Drive OK"   if drive_ok  else "⚠️ Drive SIN conexión"
-    print(f"✅ Crimson Manager Online | {estado_s} | {estado_d} | Servidores: {len(bot.guilds)}")
-    log.info(f"Online | {estado_s} | {estado_d} | Servidores: {len(bot.guilds)}")
+    print(f"✅ Crimson Manager Online | {estado_s} | {estado_d} | MySQL ✅")
+    log.info(f"Online | {estado_s} | {estado_d}")
 
-# --- HELPER: canal de alertas ─────────────────────────────────────────────────
+# --- HELPER: canal de alertas ────────────────────────────────────────────────
 
 def get_canal_alertas_id():
-    """Devuelve el ID guardado en config, si no el del .env."""
-    return datos["config"].get("canal_alertas") or CANAL_ALERTAS_ID
+    canal_db = db.config_get("canal_alertas", "0")
+    if canal_db and canal_db != "0":
+        return int(canal_db)
+    return CANAL_ALERTAS_ID
 
-# --- VERIFICAR FORMULARIO (lógica principal de integración) ──────────────────
+# --- VERIFICAR FORMULARIO ────────────────────────────────────────────────────
 
 async def verificar_formulario_y_procesar():
-    """
-    Lee las nuevas respuestas del formulario.
-    Empareja por: Obra + Capítulo + Usuario (usando el mapa usuario_form_map).
-    Marca la tarea como Entregado o notifica si no hay match.
-    """
     loop = asyncio.get_event_loop()
     nuevas = await loop.run_in_executor(None, sheets_leer_formulario_nuevas)
     if not nuevas:
         return
-
-    hay_cambios = False
 
     for registro in nuevas:
         timestamp     = str(registro.get("Marca temporal", "")).strip()
@@ -432,36 +399,30 @@ async def verificar_formulario_y_procesar():
         proyecto_form = str(registro.get("Proyecto", "")).strip().upper()
         cap_form      = str(registro.get("Capítulo", "")).strip()
 
-        # Siempre marcar como procesado (evitar loop infinito)
-        if timestamp and timestamp not in datos["procesados_formulario"]:
-            datos["procesados_formulario"].append(timestamp)
-            hay_cambios = True
+        if timestamp:
+            db.formulario_marcar(timestamp)
 
         if not usuario_form or not proyecto_form or not cap_form:
             continue
 
-        # ── Resolver Discord ID desde el mapa de usuarios del formulario ──────
-        # Primero busca en el mapa registrado (cd!mi_usuario)
-        discord_id_str = datos["usuario_form_map"].get(usuario_form)
+        staff = db.staff_get_by_form(usuario_form)
+        discord_id_str = str(staff["discord_id"]) if staff else None
 
-        # Si no está en el mapa, intenta matching flexible por nombre_display
-        matched_tid  = None
-        matched_info = None
+        matched_tarea = None
+        tareas_activas = db.tarea_get_todas_activas()
 
-        for tid, info in list(datos["tareas"].items()):
-            obra_task  = str(info.get("obra", "")).strip().upper()
-            cap_task   = str(info.get("cap", "")).strip()
-            uid_task   = str(info.get("usuario_id", ""))
-            nombre_task = str(info.get("nombre_display", "")).strip().lower()
+        for tarea in tareas_activas:
+            obra_task   = str(tarea.get("obra", "")).strip().upper()
+            cap_task    = str(tarea.get("cap", "")).strip()
+            uid_task    = str(tarea.get("discord_id", ""))
+            nombre_task = str(tarea.get("nombre_display", "")).strip().lower()
 
             obra_ok = (proyecto_form == obra_task)
             cap_ok  = (cap_form == cap_task)
 
-            # Prioridad 1: match por Discord ID mapeado
             if discord_id_str:
                 user_ok = (uid_task == discord_id_str)
             else:
-                # Prioridad 2: match flexible por nombre (nvto dentro de "Nvto" etc.)
                 user_ok = (
                     usuario_form == nombre_task or
                     usuario_form in nombre_task or
@@ -469,13 +430,11 @@ async def verificar_formulario_y_procesar():
                 )
 
             if obra_ok and cap_ok and user_ok:
-                matched_tid  = tid
-                matched_info = info
+                matched_tarea = tarea
                 break
 
-        if not matched_tid:
+        if not matched_tarea:
             log.info(f"[Form] Sin match → {usuario_form} | {proyecto_form} | Cap {cap_form}")
-            # Avisar en canal de alertas que hubo entrega sin tarea registrada
             canal_id = get_canal_alertas_id()
             if canal_id:
                 canal = bot.get_channel(canal_id)
@@ -487,37 +446,21 @@ async def verificar_formulario_y_procesar():
                     )
             continue
 
-        # ── Actualizar tarea como Entregada ──────────────────────────────────
-        obra = matched_info["obra"]
-        cap  = matched_info["cap"]
-        rol  = matched_info["rol"]
+        obra = matched_tarea["obra"]
+        cap  = matched_tarea["cap"]
+        rol  = matched_tarea["rol"]
+        tid  = matched_tarea["id"]
 
-        if obra in datos["series"] and cap in datos["series"][obra]:
-            rol_map = {
-                "Traductor": "traduccion", "Cleaner": "limpieza",
-                "Typer": "typer", "Proofreader": "proof"
-            }
-            campo = rol_map.get(rol)
-            if campo:
-                datos["series"][obra][cap][campo] = True
-            cap_data = datos["series"][obra][cap]
-            if all([cap_data["traduccion"], cap_data["limpieza"], cap_data["typer"], cap_data["proof"]]):
-                datos["series"][obra][cap]["estado"] = "Terminado"
+        puntos = db.tarea_completar(tid)
+        nombre_display = matched_tarea.get("nombre_display", "Desconocido")
 
-        uid = str(matched_info["usuario_id"])
-        datos["expedientes"][uid] = datos["expedientes"].get(uid, 0) + 1
-        nombre_display = matched_info.get("nombre_display", "Desconocido")
-        puntos = datos["expedientes"][uid]
-        datos["tareas"].pop(matched_tid)
-        hay_cambios = True
+        await loop.run_in_executor(None, sheets_marcar_entregado, tid)
+        await loop.run_in_executor(
+            None, sheets_actualizar_ranking,
+            matched_tarea["discord_id"], nombre_display, puntos
+        )
 
-        # Sheets: marcar entregado + ranking (en background)
-        tid_local = matched_tid
-        await loop.run_in_executor(None, sheets_marcar_entregado, tid_local)
-        await loop.run_in_executor(None, sheets_actualizar_ranking, uid, nombre_display, puntos)
-
-        # Notificar en Discord
-        canal_id = matched_info.get("canal_id") or get_canal_alertas_id()
+        canal_id = matched_tarea.get("canal_id") or get_canal_alertas_id()
         if canal_id:
             canal = bot.get_channel(canal_id)
             if canal:
@@ -534,34 +477,30 @@ async def verificar_formulario_y_procesar():
                 await canal.send(embed=embed)
         log.info(f"[Form] Entrega procesada: {nombre_display} | {obra} Cap {cap}")
 
-    if hay_cambios:
-        guardar_db()
-
-# --- MONITOR PRINCIPAL ────────────────────────────────────────────────────────
+# --- MONITOR PRINCIPAL ───────────────────────────────────────────────────────
 
 @tasks.loop(minutes=5)
 async def monitor_tiempos():
     ahora = datetime.now()
     loop  = asyncio.get_event_loop()
 
-    # Reinicio mensual
-    if ahora.month != datos.get("mes_actual"):
-        datos["expedientes"] = {}
-        datos["mes_actual"]  = ahora.month
-        guardar_db()
-        log.info("Expedientes mensuales reiniciados.")
+    # Reinicio mensual (los puntos históricos se conservan en MySQL)
+    mes_actual = db.config_get("mes_actual", "0")
+    if str(ahora.month) != mes_actual:
+        db.config_set("mes_actual", ahora.month)
+        log.info("Mes actualizado en config MySQL.")
 
-    # ── 1. Verificar formulario → marcar entregas automáticamente ────────────
     await verificar_formulario_y_procesar()
 
-    # ── 2. Chequear tareas vencidas → RETRASADO ───────────────────────────────
-    hubo_cambios = False
-    for tid, info in list(datos["tareas"].items()):
+    tareas_activas = db.tarea_get_todas_activas()
+    for tarea in tareas_activas:
         try:
-            limite = datetime.fromisoformat(info["limite"])
+            limite = tarea["limite"] if isinstance(tarea["limite"], datetime) \
+                     else datetime.fromisoformat(str(tarea["limite"]))
             if ahora >= limite:
-                canal_id = info.get("canal_id") or get_canal_alertas_id()
-                user     = bot.get_user(info["usuario_id"])
+                tid      = tarea["id"]
+                canal_id = tarea.get("canal_id") or get_canal_alertas_id()
+                user     = bot.get_user(tarea["discord_id"])
 
                 if canal_id:
                     canal = bot.get_channel(canal_id)
@@ -569,48 +508,20 @@ async def monitor_tiempos():
                         embed = discord.Embed(
                             title="🔴 TAREA RETRASADA",
                             description=(
-                                f"{user.mention}, el plazo de **{info['obra']}** "
-                                f"Cap {info['cap']} (`{info['rol']}`) ha **vencido**.\n"
+                                f"{user.mention}, el plazo de **{tarea['obra']}** "
+                                f"Cap {tarea['cap']} (`{tarea['rol']}`) ha **vencido**.\n"
                                 f"Por favor contacta a un administrador."
                             ),
                             color=0xff0000
                         )
                         await canal.send(content=user.mention, embed=embed)
 
-                # Marcar Retrasado en Sheets
                 await loop.run_in_executor(None, sheets_marcar_retrasado, tid)
-                datos["tareas"].pop(tid)
-                hubo_cambios = True
+                db.tarea_cancelar(tid)
 
         except Exception as e:
-            log.error(f"[Monitor Tareas] {tid}: {e}")
+            log.error(f"[Monitor Tareas] {tarea.get('id')}: {e}")
             continue
-
-    # ── 3. Chequear correcciones vencidas ────────────────────────────────────
-    for rid, info in list(datos["correcciones"].items()):
-        try:
-            limite = datetime.fromisoformat(info["limite"])
-            if ahora >= limite:
-                canal = bot.get_channel(info["canal_id"])
-                user  = bot.get_user(info["usuario_id"])
-                if canal and user:
-                    embed = discord.Embed(
-                        title="🚨 TIEMPO AGOTADO — SIN CORRECCIÓN",
-                        description=(
-                            f"{user.mention}, las 3 horas para corregir "
-                            f"`{info['error']}` han pasado."
-                        ),
-                        color=0xff0000
-                    )
-                    await canal.send(content=user.mention, embed=embed)
-                datos["correcciones"].pop(rid)
-                hubo_cambios = True
-        except Exception as e:
-            log.error(f"[Monitor Correcciones] {rid}: {e}")
-            continue
-
-    if hubo_cambios:
-        guardar_db()
 
 @monitor_tiempos.error
 async def monitor_error(error):
@@ -621,15 +532,13 @@ async def monitor_error(error):
 @tasks.loop(minutes=1)
 async def recordatorio_diario():
     ahora = datetime.now()
-    # Solo dispara a las 9:00 AM y si hoy no lo ha enviado aún
     if ahora.hour != 9 or ahora.minute != 0:
         return
-    ultimo = datos["config"].get("ultimo_recordatorio")
+    ultimo = db.config_get("ultimo_recordatorio")
     hoy = ahora.strftime("%Y-%m-%d")
     if ultimo == hoy:
-        return   # Ya se envió hoy
-    datos["config"]["ultimo_recordatorio"] = hoy
-    guardar_db()
+        return
+    db.config_set("ultimo_recordatorio", hoy)
 
     canal_id = get_canal_alertas_id()
     if not canal_id:
@@ -638,9 +547,7 @@ async def recordatorio_diario():
     if not canal:
         return
 
-    pendientes = [
-        (tid, info) for tid, info in datos["tareas"].items()
-    ]
+    pendientes = db.tarea_get_todas_activas()
     if not pendientes:
         return
 
@@ -652,27 +559,23 @@ async def recordatorio_diario():
     )
     urgentes_hoy = []
     normales = []
-    for tid, info in pendientes:
-        limite = datetime.fromisoformat(info["limite"])
+    for tarea in pendientes:
+        limite = tarea["limite"] if isinstance(tarea["limite"], datetime) \
+                 else datetime.fromisoformat(str(tarea["limite"]))
         horas_restantes = (limite - ahora).total_seconds() / 3600
-        entrada = f"• <@{info['usuario_id']}> — **{info['obra']}** Cap {info['cap']} (`{info['rol']}`) — vence <t:{int(limite.timestamp())}:R>"
+        entrada = (
+            f"• <@{tarea['discord_id']}> — **{tarea['obra']}** Cap {tarea['cap']} "
+            f"(`{tarea['rol']}`) — vence <t:{int(limite.timestamp())}:R>"
+        )
         if horas_restantes <= 24:
             urgentes_hoy.append(entrada)
         else:
             normales.append(entrada)
 
     if urgentes_hoy:
-        embed.add_field(
-            name="🔴 URGENTES (vencen hoy)",
-            value="\n".join(urgentes_hoy[:10]),
-            inline=False
-        )
+        embed.add_field(name="🔴 URGENTES (vencen hoy)", value="\n".join(urgentes_hoy[:10]), inline=False)
     if normales:
-        embed.add_field(
-            name="🟡 En curso",
-            value="\n".join(normales[:15]),
-            inline=False
-        )
+        embed.add_field(name="🟡 En curso", value="\n".join(normales[:15]), inline=False)
     embed.set_footer(text=f"Total: {len(pendientes)} tarea(s) activa(s)")
     await canal.send(embed=embed)
 
@@ -680,15 +583,14 @@ async def recordatorio_diario():
 async def recordatorio_error(error):
     log.error(f"[Recordatorio] Error: {error}")
 
-# --- COMANDOS DE ADMINISTRACIÓN ───────────────────────────────────────────────
+# --- COMANDOS DE ADMINISTRACIÓN ──────────────────────────────────────────────
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def set_canal(ctx, canal: discord.TextChannel = None):
     """Configura el canal de alertas de retraso. cd!set_canal #canal"""
     canal = canal or ctx.channel
-    datos["config"]["canal_alertas"] = canal.id
-    guardar_db()
+    db.config_set("canal_alertas", canal.id)
     await ctx.send(f"✅ Canal de alertas configurado: {canal.mention}", delete_after=10)
 
 @bot.command()
@@ -696,35 +598,37 @@ async def mi_usuario(ctx, *, nombre_form: str):
     """
     Vincula tu usuario del formulario con tu cuenta de Discord.
     Uso: cd!mi_usuario nvto
-    Así el bot puede emparejarte automáticamente cuando entregues por formulario.
     """
     nombre_form = nombre_form.strip().lower()
-    uid = str(ctx.author.id)
-
-    # Guardar en ambas direcciones
-    datos["usuario_form_map"][nombre_form] = uid
-    if uid not in datos["staff"]:
-        datos["staff"][uid] = {}
-    datos["staff"][uid]["usuario_form"] = nombre_form
-    guardar_db()
-
-    await ctx.send(
-        f"✅ **{ctx.author.mention}** vinculado al usuario de formulario `{nombre_form}`.\n"
-        f"Ahora el bot te reconocerá automáticamente cuando entregues.",
-        delete_after=15
-    )
+    uid = ctx.author.id
+    try:
+        db.staff_registrar(
+            discord_id=uid,
+            usuario_form=nombre_form,
+            nombre_display=ctx.author.display_name
+        )
+        await ctx.send(
+            f"✅ **{ctx.author.mention}** registrado como `{nombre_form}`.\n"
+            f"El bot te reconocerá automáticamente cuando entregues.",
+            delete_after=15
+        )
+    except Exception as e:
+        log.error(f"mi_usuario: {e}")
+        await ctx.send("❌ Error al registrar. Intenta de nuevo.", delete_after=10)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def ver_usuarios(ctx):
-    """Muestra el mapa de usuarios de formulario vinculados (solo admin)"""
-    if not datos["usuario_form_map"]:
-        return await ctx.send("⚠️ Ningún staff ha vinculado su usuario aún.", delete_after=10)
-    lineas = []
-    for nombre_form, uid in datos["usuario_form_map"].items():
-        lineas.append(f"• `{nombre_form}` → <@{uid}>")
+    """Muestra el staff registrado en MySQL (solo admin)"""
+    lista = db.staff_listar()
+    if not lista:
+        return await ctx.send("⚠️ Ningún staff registrado aún.", delete_after=10)
+    lineas = [
+        f"{'✅' if m['activo'] else '❌'} `{m['usuario_form'] or '—'}` → <@{m['discord_id']}>"
+        for m in lista
+    ]
     embed = discord.Embed(
-        title="🔗 Usuarios de formulario vinculados",
+        title="👥 Staff registrado",
         description="\n".join(lineas),
         color=COLOR_CRIMSON
     )
@@ -735,97 +639,30 @@ async def ver_usuarios(ctx):
 async def nueva_obra(ctx, *, nombre: str):
     """Registra una serie y crea su carpeta en Google Drive automáticamente"""
     await ctx.message.delete()
-    nombre_up = nombre.strip().upper()
-    # Nombre original (capitalizado) para Drive — preserva mayúsculas/minúsculas del usuario
+    nombre_up    = nombre.strip().upper()
     nombre_drive = nombre.strip()
-    if nombre_up not in datos["series"]:
-        datos["series"][nombre_up] = {}
-        guardar_db()
-        embed = discord.Embed(
-            title="🆕 NUEVA SERIE AGREGADA",
-            description=f"La obra **{nombre_up}** ha sido registrada.",
-            color=0x00cc66
-        )
-        # Crear carpeta en Drive en background
-        loop = asyncio.get_event_loop()
-        exito, resultado = await loop.run_in_executor(None, drive_crear_proyecto, nombre_drive)
-        if exito:
-            embed.add_field(
-                name="📁 Google Drive",
-                value="Carpeta creada con 6 subcarpetas ✅",
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name="📁 Google Drive",
-                value=f"⚠️ No se pudo crear en Drive: {resultado}",
-                inline=False
-            )
-            log.warning(f"[Drive] nueva_obra '{nombre_drive}': {resultado}")
-        await ctx.send(embed=embed)
+
+    existente = db.proyecto_get(nombre_up)
+    if existente:
+        return await ctx.send(f"⚠️ `{nombre_up}` ya está en la base de datos.", delete_after=5)
+
+    embed = discord.Embed(
+        title="🆕 NUEVA SERIE AGREGADA",
+        description=f"La obra **{nombre_up}** ha sido registrada.",
+        color=0x00cc66
+    )
+    loop = asyncio.get_event_loop()
+    exito, resultado = await loop.run_in_executor(None, drive_crear_proyecto, nombre_drive)
+    carpeta_id = resultado if exito else None
+
+    db.proyecto_crear(nombre_drive, carpeta_id)
+
+    if exito:
+        embed.add_field(name="📁 Google Drive", value="Carpeta creada con 6 subcarpetas ✅", inline=False)
     else:
-        await ctx.send(f"⚠️ `{nombre_up}` ya está en la base de datos.", delete_after=5)
-
-def drive_listar_proyectos():
-    """Lista todas las carpetas (proyectos) en la carpeta raíz de Drive."""
-    if not drive_service or not CARPETA_RAIZ_ID:
-        return None, "Drive no conectado."
-    try:
-        query = (
-            f"'{CARPETA_RAIZ_ID}' in parents and "
-            f"mimeType='application/vnd.google-apps.folder' and "
-            f"trashed=false"
-        )
-        results = drive_service.files().list(
-            q=query,
-            fields="files(id, name)",
-            orderBy="name"
-        ).execute()
-        return results.get("files", []), None
-    except Exception as e:
-        return None, str(e)
-
-def drive_listar_capitulos(proyecto_nombre):
-    """Lista las subcarpetas (etapas) y los capítulos dentro de ellas para un proyecto."""
-    if not drive_service or not CARPETA_RAIZ_ID:
-        return None, "Drive no conectado."
-    try:
-        # Buscar la carpeta del proyecto
-        query = (
-            f"name='{proyecto_nombre.replace(chr(39), chr(92)+chr(39))}' and "
-            f"'{CARPETA_RAIZ_ID}' in parents and "
-            f"mimeType='application/vnd.google-apps.folder' and trashed=false"
-        )
-        res = drive_service.files().list(q=query, fields="files(id,name)").execute()
-        items = res.get("files", [])
-        if not items:
-            return None, f"No se encontró la carpeta `{proyecto_nombre}` en Drive."
-        proyecto_id = items[0]["id"]
-
-        # Listar etapas dentro del proyecto
-        sub_query = (
-            f"'{proyecto_id}' in parents and "
-            f"mimeType='application/vnd.google-apps.folder' and trashed=false"
-        )
-        etapas = drive_service.files().list(
-            q=sub_query, fields="files(id,name)", orderBy="name"
-        ).execute().get("files", [])
-
-        resumen = {}
-        for etapa in etapas:
-            cap_query = (
-                f"'{etapa['id']}' in parents and "
-                f"mimeType='application/vnd.google-apps.folder' and trashed=false"
-            )
-            caps = drive_service.files().list(
-                q=cap_query, fields="files(name)", orderBy="name"
-            ).execute().get("files", [])
-            if caps:
-                resumen[etapa["name"]] = [c["name"] for c in caps]
-
-        return resumen, None
-    except Exception as e:
-        return None, str(e)
+        embed.add_field(name="📁 Google Drive", value=f"⚠️ No se pudo crear en Drive: {resultado}", inline=False)
+        log.warning(f"[Drive] nueva_obra '{nombre_drive}': {resultado}")
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def carpetas(ctx, *, proyecto: str = None):
@@ -833,7 +670,6 @@ async def carpetas(ctx, *, proyecto: str = None):
     Muestra las carpetas de Drive.
     Sin argumento → lista todos los proyectos.
     Con argumento → muestra los capítulos de ese proyecto.
-    Uso: cd!carpetas  |  cd!carpetas Naruto
     """
     await ctx.message.delete()
     loop = asyncio.get_event_loop()
@@ -842,7 +678,6 @@ async def carpetas(ctx, *, proyecto: str = None):
         return await ctx.send("❌ Google Drive no está conectado.", delete_after=7)
 
     if not proyecto:
-        # Listar todos los proyectos
         proyectos, error = await loop.run_in_executor(None, drive_listar_proyectos)
         if error:
             return await ctx.send(f"❌ Error al leer Drive: {error}", delete_after=10)
@@ -855,7 +690,6 @@ async def carpetas(ctx, *, proyecto: str = None):
             color=COLOR_CRIMSON
         )
         nombres = "\n".join([f"• {p['name']}" for p in proyectos])
-        # Discord limita fields a 1024 chars, dividir si es necesario
         if len(nombres) <= 1024:
             embed.add_field(name="📁 Proyectos", value=nombres, inline=False)
         else:
@@ -867,9 +701,7 @@ async def carpetas(ctx, *, proyecto: str = None):
                     inline=False
                 )
         await ctx.send(embed=embed)
-
     else:
-        # Mostrar capítulos de un proyecto específico
         resumen, error = await loop.run_in_executor(None, drive_listar_capitulos, proyecto)
         if error:
             return await ctx.send(f"❌ {error}", delete_after=10)
@@ -891,17 +723,16 @@ async def carpetas(ctx, *, proyecto: str = None):
 
 @bot.command()
 async def series(ctx):
-    """Catálogo de obras leido en tiempo real desde Drive + Sheets"""
-    msg_cargando = await ctx.send("🔄 Cargando datos desde Drive y Sheets...")
+    """Catálogo de obras leido en tiempo real desde Drive + MySQL"""
+    msg_cargando = await ctx.send("🔄 Cargando datos desde Drive...")
     loop = asyncio.get_running_loop()
 
     proyectos_drive, err_drive = await loop.run_in_executor(None, drive_listar_proyectos)
-    resumen_sheets, err_sheets = await loop.run_in_executor(None, sheets_leer_resumen)
+    resumen_sheets, _          = await loop.run_in_executor(None, sheets_leer_resumen)
     await msg_cargando.delete()
 
     if err_drive or proyectos_drive is None:
         return await ctx.send(f"❌ Error al leer Drive: {err_drive}", delete_after=10)
-
     if not proyectos_drive:
         return await ctx.send("💭 No hay proyectos en Drive todavía.", delete_after=7)
 
@@ -912,46 +743,41 @@ async def series(ctx):
         color=COLOR_CRIMSON,
         timestamp=datetime.now()
     )
-
     MEDALLAS = ["🥇", "🥈", "🥉"]
-
     for i, p in enumerate(proyectos_drive):
-        nombre = p["name"]
-        nombre_up = nombre.upper()
-        info = resumen.get(nombre_up, {})
-        total      = info.get("total", 0)
-        entregado  = info.get("entregado", 0)
-        retrasado  = info.get("retrasado", 0)
-        pendiente  = info.get("pendiente", 0)
+        nombre    = p["name"]
+        info      = resumen.get(nombre.upper(), {})
+        total     = info.get("total", 0)
+        entregado = info.get("entregado", 0)
+        retrasado = info.get("retrasado", 0)
+        pendiente = info.get("pendiente", 0)
 
-        # Barra de progreso visual
         if total > 0:
-            pct = entregado / total
+            pct    = entregado / total
             barras = int(pct * 8)
-            barra = "█" * barras + "░" * (8 - barras)
+            barra  = "█" * barras + "░" * (8 - barras)
             pct_txt = f"{int(pct*100)}%"
         else:
-            barra = "░" * 8
+            barra   = "░" * 8
             pct_txt = "Sin datos"
 
         icono = MEDALLAS[i] if i < 3 else "📘"
         parts = [f"`{barra}` {pct_txt}"]
-        if total:      parts.append(f"📌 Asignaciones: **{total}**")
-        if entregado:  parts.append(f"✅ Entregadas: **{entregado}**")
-        if retrasado:  parts.append(f"🔴 Retrasadas: **{retrasado}**")
-        if pendiente:  parts.append(f"⏳ Pendientes: **{pendiente}**")
+        if total:     parts.append(f"📌 Asignaciones: **{total}**")
+        if entregado: parts.append(f"✅ Entregadas: **{entregado}**")
+        if retrasado: parts.append(f"🔴 Retrasadas: **{retrasado}**")
+        if pendiente: parts.append(f"⏳ Pendientes: **{pendiente}**")
 
         embed.add_field(
             name=f"{icono} {nombre}",
             value="\n".join(parts) if parts else "Sin asignaciones aún",
             inline=False
         )
-        # Discord limite de 25 fields, enviar embed parcial si se llena
         if len(embed.fields) == 24 and i < len(proyectos_drive) - 1:
             await ctx.send(embed=embed)
             embed = discord.Embed(color=COLOR_CRIMSON)
 
-    embed.set_footer(text="Fuente: Google Drive + Sheets  |  En tiempo real")
+    embed.set_footer(text="Fuente: Google Drive + MySQL  |  En tiempo real")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -962,6 +788,7 @@ async def importar(ctx, *, contenido: str):
     match = re.search(r'\d', contenido)
     if not match:
         return await ctx.send("❌ No indicaste los números de capítulo.", delete_after=5)
+
     indice = match.start()
     if '"' in contenido:
         partes = contenido.split('"')
@@ -970,27 +797,21 @@ async def importar(ctx, *, contenido: str):
     else:
         nombre_obra = contenido[:indice].strip().upper()
         numeros_raw = contenido[indice:]
+
     if not nombre_obra:
         return await ctx.send("❌ No se pudo leer el nombre.", delete_after=5)
-    if nombre_obra in datos["series"]:
-        caps = re.findall(r'\d+', numeros_raw)
-        if not caps:
-            return await ctx.send("❌ No hay números válidos.", delete_after=5)
-        agregados = sum(
-            1 for c in caps
-            if c not in datos["series"][nombre_obra]
-            and not datos["series"][nombre_obra].update({c: {
-                "traduccion": False, "limpieza": False,
-                "typer": False,     "proof": False, "estado": "Pendiente"
-            }})
-        )
-        guardar_db()
-        await ctx.send(f"📥 **{agregados} capítulos** importados a `{nombre_obra}`.", delete_after=10)
-    else:
-        await ctx.send(f"❌ `{nombre_obra}` no existe. Usa `cd!nueva_obra` primero.", delete_after=10)
 
+    caps = re.findall(r'\d+', numeros_raw)
+    if not caps:
+        return await ctx.send("❌ No hay números válidos.", delete_after=5)
 
-# --- SISTEMA DE ORDEN ─────────────────────────────────────────────────────────
+    agregados, error = db.cap_importar(nombre_obra, caps)
+    if error:
+        return await ctx.send(f"❌ Error: {error}", delete_after=10)
+
+    await ctx.send(f"📥 **{agregados} capítulos** importados a `{nombre_obra}`.", delete_after=10)
+
+# --- SISTEMA DE ORDEN ────────────────────────────────────────────────────────
 
 ROLES_DISP = ["Traductor", "Cleaner", "Typer", "Proofreader"]
 
@@ -1010,7 +831,7 @@ async def orden(ctx):
             return await ctx.send(f"❌ Número inválido (1-{len(ROLES_DISP)}).", delete_after=7)
         rol = ROLES_DISP[int(msg_r.content) - 1]
 
-        # Paso 2: Obra — se leen desde Google Drive en tiempo real
+        # Paso 2: Obra — desde Google Drive en tiempo real
         cargando = await ctx.send("🔄 Cargando proyectos desde Drive...")
         loop = asyncio.get_event_loop()
         proyectos_drive, drive_err = await loop.run_in_executor(None, drive_listar_proyectos)
@@ -1024,7 +845,6 @@ async def orden(ctx):
 
         obras_list = [p["name"] for p in proyectos_drive]
         desc_obras = "\n".join([f"**{i+1}**. {o}" for i, o in enumerate(obras_list)])
-        # Discord limita a 4096 chars en description; truncar si hay muchos proyectos
         if len(desc_obras) > 3900:
             obras_list = obras_list[:30]
             desc_obras = "\n".join([f"**{i+1}**. {o}" for i, o in enumerate(obras_list)]) + "\n*(mostrando primeros 30)*"
@@ -1059,34 +879,35 @@ async def orden(ctx):
             return await ctx.send("❌ No mencionaste a nadie.", delete_after=7)
         user = msg_u.mentions[0]
 
-        # Registrar
+        # Registrar en MySQL
         vence = datetime.now() + timedelta(days=3)
-        tid = f"T-{int(datetime.now().timestamp())}"
-        datos["tareas"][tid] = {
-            "usuario_id":     user.id,
-            "nombre_display": user.display_name,   # ← clave para match con formulario
-            "obra":           obra,
-            "cap":            cap,
-            "rol":            rol,
-            "limite":         vence.isoformat(),
-            "canal_id":       ctx.channel.id
-        }
-        guardar_db()
+        tid   = f"T-{int(datetime.now().timestamp())}"
+
+        db.staff_registrar(user.id, None, user.display_name)
+        db.tarea_crear(
+            tarea_id=tid,
+            discord_id=user.id,
+            obra=obra,
+            cap=cap,
+            rol=rol,
+            limite=vence,
+            canal_id=ctx.channel.id,
+        )
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, sheets_agregar_asignacion, tid, user, obra, cap, rol, vence)
 
-        # 📩 DM automático al staff asignado
+        # DM automático
         try:
             dm_embed = discord.Embed(
                 title="📬 NUEVA TAREA ASIGNADA",
-                description=f"Se te ha asignado una tarea en **Crimson Scan**.",
+                description="Se te ha asignado una tarea en **Crimson Scan**.",
                 color=COLOR_CRIMSON,
                 timestamp=datetime.now()
             )
-            dm_embed.add_field(name="📖 Obra",      value=obra,  inline=True)
-            dm_embed.add_field(name="🔢 Capítulo",  value=cap,   inline=True)
-            dm_embed.add_field(name="🎭 Rol",       value=rol,   inline=True)
+            dm_embed.add_field(name="📖 Obra",        value=obra, inline=True)
+            dm_embed.add_field(name="🔢 Capítulo",    value=cap,  inline=True)
+            dm_embed.add_field(name="🎭 Rol",         value=rol,  inline=True)
             dm_embed.add_field(name="⏳ Fecha límite", value=f"<t:{int(vence.timestamp())}:F>", inline=False)
             dm_embed.set_footer(text="Entrega tu trabajo por el Formulario de Google 📝")
             await user.send(embed=dm_embed)
@@ -1101,7 +922,7 @@ async def orden(ctx):
         embed_orden.add_field(name="🔢 Capítulo", value=cap,          inline=True)
         embed_orden.add_field(name="🎭 Rol",      value=rol,          inline=True)
         embed_orden.add_field(name="⏳ Vence",    value=f"<t:{int(vence.timestamp())}:R>", inline=True)
-        embed_orden.set_footer(text="📋 Registrado en Sheets  |  Entrega por formulario o cd!terminado")
+        embed_orden.set_footer(text="📋 Registrado en MySQL y Sheets  |  Entrega por formulario o cd!terminado")
         await ctx.send(content=user.mention, embed=embed_orden)
 
     except asyncio.TimeoutError:
@@ -1110,32 +931,19 @@ async def orden(ctx):
         log.error(f"[orden] {e}")
         await ctx.send("❌ Error inesperado.", delete_after=10)
 
-# --- REPORTES Y STAFF ─────────────────────────────────────────────────────────
+# --- REPORTES Y STAFF ────────────────────────────────────────────────────────
 
 @bot.command()
 async def reportar(ctx, usuario: discord.Member, *, error: str):
-    """Reporta un error a un miembro del staff (3 horas de plazo)"""
-    await ctx.message.delete()
-    vence = datetime.now() + timedelta(hours=3)
-    rid   = f"R-{int(datetime.now().timestamp())}"
-    datos["correcciones"][rid] = {
-        "usuario_id": usuario.id, "error": error,
-        "limite": vence.isoformat(), "canal_id": ctx.channel.id
-    }
-    uid = str(usuario.id)
-    if uid not in datos["errores_hist"]:
-        datos["errores_hist"][uid] = []
-    datos["errores_hist"][uid].append({
-        "fecha": datetime.now().strftime("%d/%m/%Y"), "error": error
-    })
-    guardar_db()
+    """Registra un error a un miembro del staff"""
+    db.staff_registrar(usuario.id, None, usuario.display_name)
+    db.error_registrar(usuario.id, error, reportado_por=ctx.author.id)
     embed = discord.Embed(
-        title="⚠️ CORRECCIÓN URGENTE",
+        title="⚠️ ERROR REGISTRADO",
         description=(
             f"{usuario.mention}, se reportó un error:\n\n"
             f"**Error:** `{error}`\n\n"
-            f"Tienes **3 horas** — vence: <t:{int(vence.timestamp())}:R>\n"
-            f"Usa `cd!listo` al corregir."
+            f"Reportado por {ctx.author.mention}."
         ),
         color=0xffa500
     )
@@ -1143,91 +951,75 @@ async def reportar(ctx, usuario: discord.Member, *, error: str):
 
 @bot.command()
 async def listo(ctx):
-    """Confirma corrección de un error"""
-    encontrado = False
-    for rid, info in list(datos["correcciones"].items()):
-        if info["usuario_id"] == ctx.author.id:
-            datos["correcciones"].pop(rid)
-            encontrado = True
-    if encontrado:
-        guardar_db()
-        await ctx.send(f"✅ {ctx.author.mention} corrigió su error.")
-    else:
-        await ctx.send("❌ No tienes reportes de error pendientes.", delete_after=5)
+    """Marca tu tarea activa como entregada."""
+    uid    = ctx.author.id
+    tareas = db.tarea_get_por_usuario(uid)
+    if not tareas:
+        return await ctx.send("⚠️ No tienes tareas activas.", delete_after=7)
 
-@bot.command()
-async def terminado(ctx):
-    """Marca tu tarea como finalizada manualmente"""
-    await ctx.message.delete()
-    tareas_usuario = [(tid, info) for tid, info in datos["tareas"].items()
-                      if info["usuario_id"] == ctx.author.id]
-    if not tareas_usuario:
-        return await ctx.send("❌ No tienes tareas activas.", delete_after=5)
-
-    tid, info = tareas_usuario[0]
-    obra, cap, rol = info["obra"], info["cap"], info["rol"]
-
-    if obra in datos["series"] and cap in datos["series"][obra]:
-        rol_map = {
-            "Traductor": "traduccion", "Cleaner": "limpieza",
-            "Typer": "typer", "Proofreader": "proof"
-        }
-        campo = rol_map.get(rol)
-        if campo:
-            datos["series"][obra][cap][campo] = True
-        cap_data = datos["series"][obra][cap]
-        if all([cap_data["traduccion"], cap_data["limpieza"], cap_data["typer"], cap_data["proof"]]):
-            datos["series"][obra][cap]["estado"] = "Terminado"
-
-    uid    = str(ctx.author.id)
-    nombre = ctx.author.display_name
-    datos["expedientes"][uid] = datos["expedientes"].get(uid, 0) + 1
-    puntos = datos["expedientes"][uid]
-    datos["tareas"].pop(tid)
-    guardar_db()
+    tarea  = tareas[0]
+    puntos = db.tarea_completar(tarea["id"])
 
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, sheets_marcar_entregado, tid)
-    await loop.run_in_executor(None, sheets_actualizar_ranking, uid, nombre, puntos)
+    await loop.run_in_executor(None, sheets_marcar_entregado, tarea["id"])
+    await loop.run_in_executor(None, sheets_actualizar_ranking, uid, ctx.author.display_name, puntos)
 
     embed = discord.Embed(
-        title="✅ TAREA COMPLETADA",
-        description=f"**{nombre}** entregó `{rol}` de `{obra}` Cap {cap}.\n📊 Sheets actualizado.",
-        color=0x00cc66
+        title="✅ ¡Tarea entregada!",
+        description=(
+            f"**Obra:** {tarea['obra']}\n"
+            f"**Capítulo:** {tarea['cap']} — {tarea['rol']}\n"
+            f"**Puntos del mes:** {puntos} 🏅"
+        ),
+        color=0x00b300
     )
     await ctx.send(embed=embed)
 
 @bot.command()
+async def terminado(ctx):
+    """Alias de cd!listo."""
+    await ctx.invoke(bot.get_command("listo"))
+
+@bot.command()
 async def mis_tareas(ctx):
-    """Muestra tus tareas activas"""
-    mis = [(tid, info) for tid, info in datos["tareas"].items()
-           if info["usuario_id"] == ctx.author.id]
-    if not mis:
-        return await ctx.send("📭 No tienes tareas activas.", delete_after=5)
-    embed = discord.Embed(title=f"📋 Tareas de {ctx.author.display_name}", color=COLOR_CRIMSON)
-    for tid, info in mis:
-        vence_ts = int(datetime.fromisoformat(info["limite"]).timestamp())
+    """Muestra tus tareas activas."""
+    tareas = db.tarea_get_por_usuario(ctx.author.id)
+    if not tareas:
+        return await ctx.send("✨ No tienes tareas activas ahora mismo.", delete_after=10)
+
+    embed = discord.Embed(title="📋 Tus tareas activas", color=COLOR_CRIMSON)
+    for t in tareas:
+        limite_dt = t["limite"] if isinstance(t["limite"], datetime) \
+                    else datetime.fromisoformat(str(t["limite"]))
+        diff  = limite_dt - datetime.now()
+        horas = int(diff.total_seconds() // 3600)
+        estado_tiempo = f"🔴 ¡{abs(horas)}h de retraso!" if horas < 0 else f"⏰ {horas}h restantes"
         embed.add_field(
-            name=f"{info['obra']} — Cap {info['cap']}",
-            value=f"**Rol:** {info['rol']}\n**Vence:** <t:{vence_ts}:R>",
+            name=f"📖 {t['obra']} — Cap. {t['cap']} ({t['rol']})",
+            value=estado_tiempo,
             inline=False
         )
     await ctx.send(embed=embed)
 
 @bot.command()
 async def ranking(ctx):
-    """Ranking mensual de productividad"""
-    if not datos["expedientes"]:
+    """Ranking mensual de productividad."""
+    top = db.ranking_mes()
+    if not top or all(m["puntos"] == 0 for m in top):
         return await ctx.send("📊 El ranking está vacío este mes.")
-    top = sorted(datos["expedientes"].items(), key=lambda x: x[1], reverse=True)
+
     medallas = ["🥇", "🥈", "🥉"]
     lista = ""
-    for i, (uid, puntos) in enumerate(top[:10]):
+    for i, m in enumerate(top[:10]):
+        if m["puntos"] == 0:
+            continue
         medalla = medallas[i] if i < 3 else f"**#{i+1}**"
-        lista += f"{medalla} <@{uid}> — {puntos} cap{'s' if puntos != 1 else ''}\n"
+        nombre  = m["nombre_display"] or f"<@{m['discord_id']}>"
+        lista  += f"{medalla} {nombre} — {m['puntos']} cap{'s' if m['puntos'] != 1 else ''}\n"
+
     embed = discord.Embed(
         title="📊 RANKING MENSUAL CRIMSON SCAN",
-        description=lista + "\n*Historial completo en Google Sheets 📋*",
+        description=lista,
         color=COLOR_CRIMSON
     )
     embed.set_footer(text="Se reinicia cada mes automáticamente.")
@@ -1235,47 +1027,34 @@ async def ranking(ctx):
 
 @bot.command()
 async def llamar_atencion(ctx, usuario: discord.Member):
-    """Historial de errores de un miembro"""
-    uid  = str(usuario.id)
-    hist = datos["errores_hist"].get(uid, [])
+    """Historial de errores de un miembro."""
+    hist = db.errores_get(usuario.id)
     if not hist:
         return await ctx.send(f"✨ {usuario.mention} no tiene errores registrados.")
-    txt = "\n".join([f"• [{e['fecha']}] {e['error']}" for e in hist[-15:]])
+
+    txt = "\n".join([f"• [{str(e['fecha'])[:10]}] {e['error']}" for e in hist])
     embed = discord.Embed(
         title=f"🚫 EXPEDIENTE: {usuario.display_name}",
-        description=txt, color=0xff0000
+        description=txt,
+        color=0xff0000
     )
     embed.set_footer(text=f"Total errores: {len(hist)}")
     await ctx.send(embed=embed)
 
 @bot.command()
 async def estadisticas(ctx):
-    """Muestra estadísticas globales del grupo en tiempo real desde Sheets"""
-    msg = await ctx.send("🔄 Analizando datos en Sheets...")
+    """Muestra estadísticas globales en tiempo real desde MySQL."""
+    msg  = await ctx.send("🔄 Consultando base de datos...")
     loop = asyncio.get_running_loop()
 
-    resumen, err = await loop.run_in_executor(None, sheets_leer_resumen)
-    ranking, _   = await loop.run_in_executor(None, sheets_leer_ranking_completo)
+    stats = await loop.run_in_executor(None, db.estadisticas_globales)
+    top   = await loop.run_in_executor(None, db.ranking_mes)
     await msg.delete()
 
-    if err or resumen is None:
-        return await ctx.send(f"❌ Error al leer Sheets: {err}", delete_after=10)
-
-    ahora = datetime.now()
-
-    # Calcular totales globales
-    total_asig    = sum(v["total"]     for v in resumen.values())
-    total_entre   = sum(v["entregado"] for v in resumen.values())
-    total_retra   = sum(v["retrasado"] for v in resumen.values())
-    total_pend    = sum(v["pendiente"] for v in resumen.values())
-    tasa_entrega  = round((total_entre / total_asig * 100), 1) if total_asig else 0
-
-    # Tareas activas en memoria
-    tareas_activas = len(datos["tareas"])
-    urgentes_24h   = sum(
-        1 for t in datos["tareas"].values()
-        if (datetime.fromisoformat(t["limite"]) - ahora).total_seconds() / 3600 <= 24
-    )
+    ahora  = datetime.now()
+    tasa   = round((stats["total_entre"] / stats["total_asig"] * 100), 1) if stats["total_asig"] else 0
+    barras = int((tasa / 100) * 10)
+    barra  = "█" * barras + "░" * (10 - barras)
 
     embed = discord.Embed(
         title="📊 ESTADÍSTICAS GLOBALES — CRIMSON SCAN",
@@ -1283,56 +1062,35 @@ async def estadisticas(ctx):
         color=COLOR_CRIMSON,
         timestamp=ahora
     )
-
-    # Barra tasa de entrega
-    barras = int((tasa_entrega / 100) * 10)
-    barra  = "█" * barras + "░" * (10 - barras)
-
     embed.add_field(
         name="━━━ 📌 RESUMEN GENERAL ━━━",
         value=(
-            f"📋 Total asignaciones: **{total_asig}**\n"
-            f"✅ Entregadas: **{total_entre}**\n"
-            f"🔴 Retrasadas: **{total_retra}**\n"
-            f"⏳ Pendientes: **{total_pend}**\n"
-            f"📈 Tasa de entrega: `{barra}` **{tasa_entrega}%**"
+            f"📋 Total asignaciones: **{stats['total_asig']}**\n"
+            f"✅ Entregadas: **{stats['total_entre']}**\n"
+            f"🔴 Retrasadas: **{stats['total_retra']}**\n"
+            f"⏳ Pendientes: **{stats['total_pend']}**\n"
+            f"📈 Tasa de entrega: `{barra}` **{tasa}%**"
         ),
         inline=False
     )
-
     embed.add_field(
         name="━━━ 🎯 TAREAS ACTIVAS ━━━",
         value=(
-            f"🟡 En curso ahora: **{tareas_activas}**\n"
-            f"🔴 Urgentes (24h): **{urgentes_24h}**"
+            f"🟡 En curso ahora: **{stats['tareas_activas']}**\n"
+            f"🔴 Urgentes (24h): **{stats['urgentes_24h']}**"
         ),
         inline=True
     )
-
-    # Obra más activa
-    if resumen:
-        obra_top = max(resumen.items(), key=lambda x: x[1]["total"])
-        embed.add_field(
-            name="━━━ 🏆 OBRA MÁS ACTIVA ━━━",
-            value=f"**{obra_top[0]}**\n{obra_top[1]['total']} asignaciones",
-            inline=True
-        )
-
-    # Top 5 ranking
-    if ranking:
+    if top:
         MEDALLAS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-        top5 = ranking[:5]
-        ranking_txt = "\n".join([
-            f"{MEDALLAS[i]} **{m['nombre']}** — {m['puntos']} pts"
-            for i, m in enumerate(top5)
+        top5_txt = "\n".join([
+            f"{MEDALLAS[i]} **{m['nombre_display'] or '<@' + str(m['discord_id']) + '>'}** — {m['puntos']} pts"
+            for i, m in enumerate(top[:5]) if m["puntos"] > 0
         ])
-        embed.add_field(
-            name="━━━ 🏅 TOP 5 STAFF ━━━",
-            value=ranking_txt,
-            inline=False
-        )
+        if top5_txt:
+            embed.add_field(name="━━━ 🏅 TOP 5 STAFF ━━━", value=top5_txt, inline=False)
 
-    embed.set_footer(text="Fuente: Google Sheets  |  Datos en tiempo real")
+    embed.set_footer(text="Fuente: MySQL  |  Datos en tiempo real")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -1348,32 +1106,25 @@ async def aviso_staff(ctx, *, mensaje: str):
     embed.set_footer(text=f"Enviado por {ctx.author.display_name}")
     await ctx.send(content="@everyone", embed=embed)
 
-# --- NUEVOS COMANDOS DE GESTIÓN ───────────────────────────────────────────────
+# --- COMANDOS DE GESTIÓN ─────────────────────────────────────────────────────
 
 @bot.command()
 async def urgentes(ctx):
-    """Muestra las tareas que vencen en las próximas 24 horas"""
-    ahora = datetime.now()
-    limite_24h = ahora + timedelta(hours=24)
-    urgentes_list = [
-        (tid, info) for tid, info in datos["tareas"].items()
-        if datetime.fromisoformat(info["limite"]) <= limite_24h
-    ]
-    if not urgentes_list:
-        return await ctx.send("🟢 No hay tareas que venzan en las próximas 24 horas.", delete_after=10)
+    """Muestra capítulos con límite en las próximas 24h."""
+    lista = db.tarea_urgentes(horas=24)
+    if not lista:
+        return await ctx.send("✅ No hay capítulos urgentes en las próximas 24h.")
 
-    embed = discord.Embed(
-        title="🔴 TAREAS URGENTES — Vencen en 24h",
-        color=0xff4444
-    )
-    for tid, info in sorted(urgentes_list, key=lambda x: x[1]["limite"]):
-        limite = datetime.fromisoformat(info["limite"])
+    embed = discord.Embed(title="🔴 CAPÍTULOS URGENTES (24h)", color=0xff0000)
+    for t in lista:
+        limite = t["limite"] if isinstance(t["limite"], datetime) \
+                 else datetime.fromisoformat(str(t["limite"]))
+        horas = int((limite - datetime.now()).total_seconds() // 3600)
         embed.add_field(
-            name=f"{info['obra']} — Cap {info['cap']} ({info['rol']})",
-            value=f"👤 <@{info['usuario_id']}> | Vence: <t:{int(limite.timestamp())}:R>",
+            name=f"📖 {t['obra']} — Cap. {t['cap']} ({t['rol']})",
+            value=f"<@{t['discord_id']}> | {'🔴 VENCIDO' if horas < 0 else f'⏰ {horas}h'}",
             inline=False
         )
-    embed.set_footer(text=f"{len(urgentes_list)} tarea(s) urgente(s)")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -1386,27 +1137,21 @@ async def estado(ctx, *, args: str):
     if len(partes) < 2 or not partes[1].isdigit():
         return await ctx.send("Uso: `cd!estado <Obra> <Capitulo>`\nEj: `cd!estado Naruto 5`", delete_after=7)
     obra_raw = partes[0].strip().upper()
-    cap   = partes[1].strip()
+    cap      = partes[1].strip()
 
-    # Buscar en datos locales
-    cap_data = datos.get("series", {}).get(obra_raw, {}).get(cap)
-
-    # Si no está en local, buscar en tareas activas
+    cap_data   = db.cap_get(obra_raw, cap)
     tareas_cap = [
-        info for info in datos["tareas"].values()
-        if info["obra"].upper() == obra_raw and info["cap"] == cap
+        t for t in db.tarea_get_todas_activas()
+        if t["obra"].upper() == obra_raw and t["cap"] == cap
     ]
 
-    embed = discord.Embed(
-        title=f"📊 ESTADO — {obra_raw} Cap {cap}",
-        color=COLOR_CRIMSON
-    )
+    embed = discord.Embed(title=f"📊 ESTADO — {obra_raw} Cap {cap}", color=COLOR_CRIMSON)
 
     ROLES_STATUS = {
-        "Traductor":   ("traduccion",  "🗒️ Traducción"),
-        "Cleaner":     ("limpieza",    "✨ Limpieza"),
-        "Typer":       ("typer",       "⌨️ Typeo"),
-        "Proofreader": ("proof",       "✅ Proofreading"),
+        "Traductor":   ("traduccion", "🗒️ Traducción"),
+        "Cleaner":     ("limpieza",   "✨ Limpieza"),
+        "Typer":       ("typer",      "⌨️ Typeo"),
+        "Proofreader": ("proof",      "✅ Proofreading"),
     }
 
     completados = 0
@@ -1414,38 +1159,38 @@ async def estado(ctx, *, args: str):
 
     if cap_data:
         for rol, (campo, etiqueta) in ROLES_STATUS.items():
-            hecho = cap_data.get(campo, False)
-            asignado = next((i for i in tareas_cap if i["rol"] == rol), None)
+            hecho    = cap_data.get(campo, False)
+            asignado = next((t for t in tareas_cap if t["rol"] == rol), None)
             if hecho:
                 val = "✅ Completado"
                 completados += 1
             elif asignado:
-                limite = datetime.fromisoformat(asignado["limite"])
-                horas = (limite - datetime.now()).total_seconds() / 3600
+                limite = asignado["limite"] if isinstance(asignado["limite"], datetime) \
+                         else datetime.fromisoformat(str(asignado["limite"]))
+                horas  = (limite - datetime.now()).total_seconds() / 3600
                 alerta = " 🔴" if horas <= 24 else ""
-                val = f"⏳ En proceso — <@{asignado['usuario_id']}> (vence <t:{int(limite.timestamp())}:R>){alerta}"
+                val = f"⏳ En proceso — <@{asignado['discord_id']}> (vence <t:{int(limite.timestamp())}:R>){alerta}"
             else:
                 val = "❏ Sin asignar"
             embed.add_field(name=etiqueta, value=val, inline=False)
 
-        # Barra de progreso global
         barras = int((completados / total_roles) * 10)
-        barra = "█" * barras + "░" * (10 - barras)
+        barra  = "█" * barras + "░" * (10 - barras)
         embed.add_field(
             name="📊 Progreso General",
             value=f"`{barra}` {completados}/{total_roles} etapas completadas",
             inline=False
         )
-        estado_general = cap_data.get("estado", "Pendiente")
-        embed.set_footer(text=f"Estado general: {estado_general}")
+        embed.set_footer(text=f"Estado general: {cap_data.get('estado', 'Pendiente')}")
     elif tareas_cap:
-        for info in tareas_cap:
-            limite = datetime.fromisoformat(info["limite"])
-            horas = (limite - datetime.now()).total_seconds() / 3600
+        for t in tareas_cap:
+            limite = t["limite"] if isinstance(t["limite"], datetime) \
+                     else datetime.fromisoformat(str(t["limite"]))
+            horas  = (limite - datetime.now()).total_seconds() / 3600
             alerta = " 🔴" if horas <= 24 else ""
             embed.add_field(
-                name=f"🎭 {info['rol']}",
-                value=f"⏳ En proceso — <@{info['usuario_id']}> (vence <t:{int(limite.timestamp())}:R>){alerta}",
+                name=f"🎭 {t['rol']}",
+                value=f"⏳ En proceso — <@{t['discord_id']}> (vence <t:{int(limite.timestamp())}:R>){alerta}",
                 inline=False
             )
         embed.set_footer(text="Capítulo con tareas activas (sin registro local)")
@@ -1457,22 +1202,18 @@ async def estado(ctx, *, args: str):
 @commands.has_permissions(administrator=True)
 async def ver_tareas_usuario(ctx, usuario: discord.Member):
     """(Admin) Muestra todas las tareas activas de un miembro especifico"""
-    sus_tareas = [(tid, info) for tid, info in datos["tareas"].items()
-                  if info["usuario_id"] == usuario.id]
+    sus_tareas = db.tarea_get_por_usuario(usuario.id)
     if not sus_tareas:
         return await ctx.send(f"💭 {usuario.mention} no tiene tareas activas.", delete_after=7)
-    embed = discord.Embed(
-        title=f"📋 Tareas de {usuario.display_name}",
-        color=COLOR_CRIMSON
-    )
-    for tid, info in sus_tareas:
-        limite = datetime.fromisoformat(info["limite"])
-        ahora = datetime.now()
-        horas = (limite - ahora).total_seconds() / 3600
-        icono = "🔴" if horas <= 24 else "🟡" if horas <= 72 else "🟢"
+    embed = discord.Embed(title=f"📋 Tareas de {usuario.display_name}", color=COLOR_CRIMSON)
+    for t in sus_tareas:
+        limite = t["limite"] if isinstance(t["limite"], datetime) \
+                 else datetime.fromisoformat(str(t["limite"]))
+        horas  = (limite - datetime.now()).total_seconds() / 3600
+        icono  = "🔴" if horas <= 24 else "🟡" if horas <= 72 else "🟢"
         embed.add_field(
-            name=f"{icono} {info['obra']} — Cap {info['cap']} ({info['rol']})",
-            value=f"Vence: <t:{int(limite.timestamp())}:R> | ID: `{tid}`",
+            name=f"{icono} {t['obra']} — Cap {t['cap']} ({t['rol']})",
+            value=f"Vence: <t:{int(limite.timestamp())}:R> | ID: `{t['id']}`",
             inline=False
         )
     embed.set_footer(text=f"Total: {len(sus_tareas)} tarea(s)")
@@ -1483,20 +1224,18 @@ async def ver_tareas_usuario(ctx, usuario: discord.Member):
 async def cancelar(ctx, usuario: discord.Member):
     """(Admin) Cancela todas las tareas activas de un miembro"""
     await ctx.message.delete()
-    sus_tareas = [(tid, info) for tid, info in datos["tareas"].items()
-                  if info["usuario_id"] == usuario.id]
-    if not sus_tareas:
+    tareas = db.tarea_get_por_usuario(usuario.id)
+    if not tareas:
         return await ctx.send(f"❌ {usuario.mention} no tiene tareas activas.", delete_after=7)
 
     loop = asyncio.get_running_loop()
-    for tid, _ in sus_tareas:
-        datos["tareas"].pop(tid, None)
-        await loop.run_in_executor(None, sheets_marcar_cancelado, tid)
-    guardar_db()
+    for t in tareas:
+        db.tarea_cancelar(t["id"])
+        await loop.run_in_executor(None, sheets_marcar_cancelado, t["id"])
 
     embed = discord.Embed(
         title="🗑️ TAREAS CANCELADAS",
-        description=f"Se cancelaron **{len(sus_tareas)} tarea(s)** de {usuario.mention}.",
+        description=f"Se cancelaron **{len(tareas)} tarea(s)** de {usuario.mention}.",
         color=0xff6600
     )
     await ctx.send(embed=embed)
@@ -1509,25 +1248,21 @@ async def extender(ctx, usuario: discord.Member, dias: int = 1):
     Uso: cd!extender @usuario 2
     """
     await ctx.message.delete()
-    sus_tareas = [(tid, info) for tid, info in datos["tareas"].items()
-                  if info["usuario_id"] == usuario.id]
-    if not sus_tareas:
+    tareas = db.tarea_get_por_usuario(usuario.id)
+    if not tareas:
         return await ctx.send(f"❌ {usuario.mention} no tiene tareas activas.", delete_after=7)
     if dias < 1 or dias > 30:
         return await ctx.send("❌ Los días deben estar entre 1 y 30.", delete_after=7)
 
-    for tid, info in sus_tareas:
-        limite_actual = datetime.fromisoformat(info["limite"])
-        nueva_limite  = limite_actual + timedelta(days=dias)
-        datos["tareas"][tid]["limite"] = nueva_limite.isoformat()
-    guardar_db()
+    for t in tareas:
+        db.tarea_extender(t["id"], dias)
 
     plural = "día" if dias == 1 else "días"
-    embed = discord.Embed(
+    embed  = discord.Embed(
         title="⏰ PLAZO EXTENDIDO",
         description=(
             f"Se extendió **{dias} {plural}** más a las tareas de {usuario.mention}.\n"
-            f"Tareas afectadas: **{len(sus_tareas)}**"
+            f"Tareas afectadas: **{len(tareas)}**"
         ),
         color=0x00aaff
     )
@@ -1536,21 +1271,18 @@ async def extender(ctx, usuario: discord.Member, dias: int = 1):
 @bot.command(name="help")
 async def help_cmd(ctx):
     """Muestra todos los comandos disponibles del bot"""
-    # NO borramos el mensaje del usuario para que quede de referencia
-
     embed = discord.Embed(
         title="📖 CRIMSON SCAN BOT — Comandos",
         description="Prefijo: `cd!`",
         color=COLOR_CRIMSON
     )
-    # EMBED 1 — Obras, Drive, Tareas (máximo 25 fields)
     embed.add_field(name="━━━ 📋 OBRAS & DRIVE ━━━", value="​", inline=False)
     embed.add_field(name="`cd!nueva_obra <nombre>`",   value="Crea obra + carpetas en Drive *(admin)*", inline=True)
     embed.add_field(name="`cd!importar <Obra> 1 2 3`", value="Importa capítulos a una obra *(admin)*", inline=True)
     embed.add_field(name="`cd!series`",                value="Catálogo de obras del bot", inline=True)
     embed.add_field(name="`cd!carpetas`",              value="Lista proyectos en Drive", inline=True)
     embed.add_field(name="`cd!carpetas <nombre>`",     value="Capítulos de un proyecto en Drive", inline=True)
-    embed.add_field(name="​",                          value="​", inline=True)  # espaciador
+    embed.add_field(name="​",                          value="​", inline=True)
 
     embed.add_field(name="━━━ 📜 TAREAS & STAFF ━━━", value="​", inline=False)
     embed.add_field(name="`cd!orden`",                 value="Asignar tarea paso a paso", inline=True)
@@ -1564,28 +1296,24 @@ async def help_cmd(ctx):
     embed.set_footer(text="Continua en el siguiente mensaje ⤵️")
     await ctx.send(embed=embed)
 
-    # EMBED 2 — Administración y Reportes
-    embed2 = discord.Embed(
-        title="📖 CRIMSON SCAN BOT — Comandos (2/2)",
-        color=COLOR_CRIMSON
-    )
+    embed2 = discord.Embed(title="📖 CRIMSON SCAN BOT — Comandos (2/2)", color=COLOR_CRIMSON)
     embed2.add_field(name="━━━ ⚙️ ADMINISTRACIÓN *(solo admin)* ━━━", value="​", inline=False)
     embed2.add_field(name="`cd!tareas @usuario`",       value="Ver tareas de cualquier miembro", inline=True)
     embed2.add_field(name="`cd!cancelar @usuario`",     value="Cancela todas las tareas de un miembro", inline=True)
     embed2.add_field(name="`cd!extender @usuario <N>`", value="Extiende plazo N días", inline=True)
     embed2.add_field(name="`cd!set_canal #canal`",      value="Canal para alertas y recordatorios", inline=True)
-    embed2.add_field(name="`cd!ver_usuarios`",          value="Mapa formulario ↔ Discord", inline=True)
+    embed2.add_field(name="`cd!ver_usuarios`",          value="Staff registrado en MySQL", inline=True)
     embed2.add_field(name="`cd!aviso_staff <msg>`",     value="Anuncio general al servidor", inline=True)
 
     embed2.add_field(name="━━━ ⚠️ REPORTES DE ERRORES ━━━", value="​", inline=False)
-    embed2.add_field(name="`cd!reportar @usuario <error>`", value="Reporta un error (3h de plazo)", inline=True)
-    embed2.add_field(name="`cd!listo`",                      value="Confirma que corregiste el error", inline=True)
+    embed2.add_field(name="`cd!reportar @usuario <error>`", value="Registra un error en el expediente", inline=True)
+    embed2.add_field(name="`cd!listo`",                      value="Marca tu tarea como entregada", inline=True)
     embed2.add_field(name="`cd!llamar_atencion @usuario`",   value="Historial de errores de un miembro", inline=True)
 
     embed2.set_footer(text="🤖 Crimson Scan Manager  |  Recordatorio automático todos los días a las 9am ☀️")
     await ctx.send(embed=embed2)
 
-# --- ERRORES DE COMANDOS ──────────────────────────────────────────────────────
+# --- ERRORES DE COMANDOS ─────────────────────────────────────────────────────
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -1598,7 +1326,7 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.BadArgument):
         await ctx.send("❌ Argumento inválido. Ejemplo: `cd!extender @usuario 3`", delete_after=7)
     elif isinstance(error, commands.CommandNotFound):
-        pass  # No responder a comandos inexistentes
+        pass
     else:
         log.error(f"[Error] {ctx.command}: {error}")
         await ctx.send(f"❌ Ocurrió un error inesperado: `{str(error)[:100]}`", delete_after=10)
