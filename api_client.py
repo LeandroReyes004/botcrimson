@@ -15,14 +15,19 @@ BOT_TOKEN = "crimson_bot_secret_2026"
 
 def _api_call(action, method='GET', data=None):
     """Hace una llamada a la API del panel"""
-    headers = {'X-Bot-Token': BOT_TOKEN}
+    # Token por query en vez de header (evita WAF de Hostinger)
+    params = {'bot_token': BOT_TOKEN}
+
     try:
         if method == 'POST':
             response = requests.post(f"{API_URL}?action={action}",
-                                     json=data, headers=headers, timeout=10)
+                                     json=data, params=params, timeout=10)
         else:
+            if data:
+                params.update(data)
             response = requests.get(f"{API_URL}?action={action}",
-                                    params=data, headers=headers, timeout=10)
+                                    params=params, timeout=10)
+
         response.raise_for_status()
         return response.json()
     except Exception as e:
