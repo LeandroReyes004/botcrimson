@@ -9,7 +9,7 @@ from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-API_URL = "https://scancrimson.com/api.php"
+API_URL = "https://scancrimson.com/bot_api.php"
 BOT_TOKEN = "crimson_bot_secret_2026"
 
 
