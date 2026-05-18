@@ -155,6 +155,58 @@ def proyecto_cambiar_estado(nombre: str, estado: str):
 #  CAPÍTULOS
 # ══════════════════════════════════════════════════════════════
 
+def capitulo_crear_o_obtener(obra: str, cap_numero: str) -> int:
+    """Crea proyecto+capítulo si no existen; devuelve el id del capítulo."""
+    proyecto = _exec(
+        "SELECT id FROM proyectos WHERE nombre_upper=%s",
+        (obra.upper(),), fetch="one"
+    )
+    if not proyecto:
+        _exec(
+            "INSERT IGNORE INTO proyectos (nombre, nombre_upper) VALUES (%s,%s)",
+            (obra, obra.upper())
+        )
+        proyecto = _exec(
+            "SELECT id FROM proyectos WHERE nombre_upper=%s",
+            (obra.upper(),), fetch="one"
+        )
+
+    proyecto_id = proyecto["id"]
+
+    cap = _exec(
+        "SELECT id FROM capitulos WHERE proyecto_id=%s AND numero=%s",
+        (proyecto_id, str(cap_numero)), fetch="one"
+    )
+    if cap:
+        return cap["id"]
+
+    _exec(
+        "INSERT IGNORE INTO capitulos (proyecto_id, numero, estado) VALUES (%s,%s,'Pendiente')",
+        (proyecto_id, str(cap_numero))
+    )
+    return _exec(
+        "SELECT id FROM capitulos WHERE proyecto_id=%s AND numero=%s",
+        (proyecto_id, str(cap_numero)), fetch="one"
+    )["id"]
+
+
+def capitulo_actualizar_etapa(capitulo_id: int, rol: str, discord_id: int):
+    """Guarda el discord_id del responsable según su rol."""
+    campos = {
+        "Traductor":   "trad_discord_id",
+        "Cleaner":     "clean_discord_id",
+        "Typer":       "type_discord_id",
+        "Proofreader": "proof_discord_id",
+    }
+    campo = campos.get(rol)
+    if not campo:
+        return
+    _exec(
+        f"UPDATE capitulos SET {campo}=%s WHERE id=%s",
+        (discord_id, capitulo_id)
+    )
+
+
 def cap_importar(nombre_proyecto: str, numeros: list):
     """Importa una lista de números de capítulo a un proyecto."""
     proy = proyecto_get(nombre_proyecto)
@@ -224,8 +276,8 @@ def cap_get(nombre_proyecto: str, numero: str):
 
 def tarea_crear(tarea_id: str, discord_id: int, obra: str, cap: str,
                 rol: str, limite: datetime, canal_id: int = None):
-    cap_row = cap_get(obra, cap)
-    capitulo_id = cap_row["id"] if cap_row else None
+    capitulo_id = capitulo_crear_o_obtener(obra, cap)
+    capitulo_actualizar_etapa(capitulo_id, rol, discord_id)
     _exec(
         "INSERT INTO tareas (id, discord_id, capitulo_id, obra, cap, rol, limite, canal_id) "
         "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
@@ -251,17 +303,29 @@ def tarea_completar(tarea_id: str):
     # Marcar etapa del capítulo si existe
     if tarea.get("capitulo_id"):
         etapa_map = {
-            "Traductor": "traduccion",
-            "Cleaner":   "limpieza",
-            "Typer":     "typer",
-            "Proofreader":"proof",
+            "Traductor":   ("traduccion", "trad_fecha"),
+            "Cleaner":     ("limpieza",   "clean_fecha"),
+            "Typer":       ("typer",      "type_fecha"),
+            "Proofreader": ("proof",      "proof_fecha"),
         }
-        etapa = etapa_map.get(tarea["rol"])
-        if etapa:
+        campos = etapa_map.get(tarea["rol"])
+        if campos:
+            campo_bool, campo_fecha = campos
             _exec(
-                f"UPDATE capitulos SET {etapa}=1 WHERE id=%s",
+                f"UPDATE capitulos SET {campo_bool}=1, {campo_fecha}=NOW() WHERE id=%s",
                 (tarea["capitulo_id"],)
             )
+            # Si todas las etapas tienen fecha, marcar capítulo como Terminado
+            cap = _exec(
+                "SELECT trad_fecha, clean_fecha, type_fecha, proof_fecha "
+                "FROM capitulos WHERE id=%s",
+                (tarea["capitulo_id"],), fetch="one"
+            )
+            if cap and all(cap[f] for f in ("trad_fecha", "clean_fecha", "type_fecha", "proof_fecha")):
+                _exec(
+                    "UPDATE capitulos SET estado='Terminado' WHERE id=%s",
+                    (tarea["capitulo_id"],)
+                )
     puntos = _exec(
         "SELECT puntos FROM expedientes WHERE discord_id=%s AND mes=%s AND anio=%s",
         (tarea["discord_id"], ahora.month, ahora.year), fetch="one"
