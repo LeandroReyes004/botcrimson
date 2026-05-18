@@ -3,7 +3,7 @@ from discord.ext import commands, tasks
 import os
 import re
 
-import db_mysql as db
+import api_client as db
 import asyncio
 import logging
 import gspread
