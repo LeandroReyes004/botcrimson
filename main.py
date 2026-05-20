@@ -2,8 +2,6 @@ import discord
 from discord.ext import commands, tasks
 import os
 import re
-
-import db_mysql as db
 import asyncio
 import logging
 import gspread
@@ -13,6 +11,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
+
+import db_mysql as db
 
 # --- LOGGING ---
 logging.basicConfig(
