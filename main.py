@@ -928,8 +928,9 @@ async def orden(ctx):
     except asyncio.TimeoutError:
         await ctx.send("⏱️ Tiempo agotado. Usa `cd!orden` de nuevo.", delete_after=10)
     except Exception as e:
-        log.error(f"[orden] {e}")
-        await ctx.send("❌ Error inesperado.", delete_after=10)
+        import traceback
+        log.error(f"[orden] {e}\n{traceback.format_exc()}")
+        await ctx.send(f"❌ Error inesperado: `{type(e).__name__}: {str(e)[:150]}`", delete_after=30)
 
 # --- REPORTES Y STAFF ────────────────────────────────────────────────────────
 
