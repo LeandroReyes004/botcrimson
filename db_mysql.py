@@ -9,25 +9,21 @@ import pymysql.cursors
 import logging
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 log = logging.getLogger(__name__)
 
-# ─── Configuración (se lee del .env) ────────────────────────
-DB_HOST = os.getenv("DB_HOST", "TU_IP_VPS")      # ← pon la IP de tu VPS
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
-DB_NAME = os.getenv("DB_NAME", "crimson_scan")
-DB_USER = os.getenv("DB_USER", "crimson_user")
-DB_PASS = os.getenv("DB_PASS", "TU_PASSWORD")
-
 
 def get_conn():
-    """Abre y devuelve una conexión MySQL. Ciérrala siempre con conn.close()."""
+    """Abre y devuelve una conexión MySQL leyendo vars del entorno en cada llamada."""
     return pymysql.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASS,
-        database=DB_NAME,
+        host=os.getenv("DB_HOST"),
+        port=int(os.getenv("DB_PORT", "3306")),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASS"),
+        database=os.getenv("DB_NAME"),
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=False,
