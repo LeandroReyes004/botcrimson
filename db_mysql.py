@@ -186,22 +186,6 @@ def capitulo_crear_o_obtener(obra: str, cap_numero: str) -> int:
     )["id"]
 
 
-def capitulo_actualizar_etapa(capitulo_id: int, rol: str, discord_id: int):
-    """Guarda el discord_id del responsable según su rol."""
-    campos = {
-        "Traductor":   "trad_discord_id",
-        "Cleaner":     "clean_discord_id",
-        "Typer":       "type_discord_id",
-        "Proofreader": "proof_discord_id",
-    }
-    campo = campos.get(rol)
-    if not campo:
-        return
-    _exec(
-        f"UPDATE capitulos SET {campo}=%s WHERE id=%s",
-        (discord_id, capitulo_id)
-    )
-
 
 def cap_importar(nombre_proyecto: str, numeros: list):
     """Importa una lista de números de capítulo a un proyecto."""
@@ -273,7 +257,6 @@ def cap_get(nombre_proyecto: str, numero: str):
 def tarea_crear(tarea_id: str, discord_id: int, obra: str, cap: str,
                 rol: str, limite: datetime, canal_id: int = None):
     capitulo_id = capitulo_crear_o_obtener(obra, cap)
-    capitulo_actualizar_etapa(capitulo_id, rol, discord_id)
     _exec(
         "INSERT INTO tareas (id, discord_id, capitulo_id, obra, cap, rol, limite, canal_id) "
         "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
