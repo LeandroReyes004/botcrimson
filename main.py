@@ -4,6 +4,7 @@ import os
 import re
 import asyncio
 import logging
+import unicodedata
 import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -614,10 +615,23 @@ async def mi_usuario(ctx, *, nombre_form: str):
     }
     PRIORIDAD = ['Lider', 'Supervisor', 'QC', 'Typesetter', 'Limpiador', 'Traductor', 'Staff']
 
+    def limpiar(s):
+        # Normaliza unicode (quita acentos, caracteres especiales) y deja solo ASCII
+        s = unicodedata.normalize('NFKD', s)
+        s = ''.join(c for c in s if not unicodedata.combining(c))
+        return s.lower().strip()
+
     rol_final = 'Staff'
     prio_idx  = len(PRIORIDAD)
     for r in ctx.author.roles:
-        norm = MAPA_ROLES.get(r.name.lower().strip())
+        nombre_limpio = limpiar(r.name)
+        norm = MAPA_ROLES.get(nombre_limpio)
+        if not norm:
+            # Búsqueda parcial: "Supervisor de grupo" → detecta "supervisor"
+            for key, val in MAPA_ROLES.items():
+                if key in nombre_limpio:
+                    norm = val
+                    break
         if norm:
             idx = PRIORIDAD.index(norm)
             if idx < prio_idx:
