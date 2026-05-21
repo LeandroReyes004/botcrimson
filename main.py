@@ -606,37 +606,37 @@ async def mi_usuario(ctx, *, nombre_form: str):
 
     # Mapear roles de Discord al rol del sistema (case-insensitive)
     MAPA_ROLES = {
-        'lider': 'Lider', 'líder': 'Lider',
+        'admin': 'Lider', 'administrator': 'Lider',
+        'lider': 'Lider', 'leader': 'Lider', 'rey': 'Lider',
         'supervisor': 'Supervisor',
         'qc': 'QC', 'quality control': 'QC',
         'typesetter': 'Typesetter', 'typer': 'Typesetter',
-        'limpiador': 'Limpiador', 'cleaner': 'Limpiador',
+        'limpiador': 'Limpiador', 'cleaner': 'Limpiador', 'redrawer': 'Limpiador',
         'traductor': 'Traductor', 'translator': 'Traductor',
     }
     PRIORIDAD = ['Lider', 'Supervisor', 'QC', 'Typesetter', 'Limpiador', 'Traductor', 'Staff']
 
     def limpiar(s):
-        # Normaliza unicode (quita acentos, caracteres especiales) y deja solo ASCII
         s = unicodedata.normalize('NFKD', s)
         s = ''.join(c for c in s if not unicodedata.combining(c))
         return s.lower().strip()
 
-    rol_final = 'Staff'
-    prio_idx  = len(PRIORIDAD)
+    roles_encontrados = []
     for r in ctx.author.roles:
         nombre_limpio = limpiar(r.name)
         norm = MAPA_ROLES.get(nombre_limpio)
         if not norm:
-            # Búsqueda parcial: "Supervisor de grupo" → detecta "supervisor"
             for key, val in MAPA_ROLES.items():
                 if key in nombre_limpio:
                     norm = val
                     break
-        if norm:
-            idx = PRIORIDAD.index(norm)
-            if idx < prio_idx:
-                prio_idx  = idx
-                rol_final = norm
+        if norm and norm not in roles_encontrados:
+            roles_encontrados.append(norm)
+
+    roles_encontrados.sort(key=lambda x: PRIORIDAD.index(x) if x in PRIORIDAD else 99)
+    rol_final  = roles_encontrados[0] if roles_encontrados else 'Staff'
+    # Si tiene doble rol (ej. Limpiador+Typesetter) guardamos ambos separados por coma
+    roles_guardar = ','.join(roles_encontrados) if len(roles_encontrados) > 1 else rol_final
 
     roles_detectados = [r.name for r in ctx.author.roles if r.name != "@everyone"]
 
@@ -648,8 +648,9 @@ async def mi_usuario(ctx, *, nombre_form: str):
             rol=rol_final
         )
         roles_txt = ", ".join(f"`{r}`" for r in roles_detectados) if roles_detectados else "_ninguno_"
+        extra = f" _(también: {', '.join(roles_encontrados[1:])})_" if len(roles_encontrados) > 1 else ""
         await ctx.send(
-            f"✅ **{ctx.author.mention}** registrado como `{nombre_form}` — Rol: **{rol_final}**\n"
+            f"✅ **{ctx.author.mention}** registrado como `{nombre_form}` — Rol: **{rol_final}**{extra}\n"
             f"🔎 Roles detectados: {roles_txt}",
             delete_after=30
         )
