@@ -647,16 +647,58 @@ async def mi_usuario(ctx, *, nombre_form: str):
             nombre_display=ctx.author.display_name,
             rol=rol_final
         )
-        roles_txt = ", ".join(f"`{r}`" for r in roles_detectados) if roles_detectados else "_ninguno_"
         extra = f" _(también: {', '.join(roles_encontrados[1:])})_" if len(roles_encontrados) > 1 else ""
         await ctx.send(
-            f"✅ **{ctx.author.mention}** registrado como `{nombre_form}` — Rol: **{rol_final}**{extra}\n"
-            f"🔎 Roles detectados: {roles_txt}",
-            delete_after=30
+            f"✅ **{ctx.author.mention}** registrado — Rol: **{rol_final}**{extra}\n"
+            f"📩 Te envié un DM para configurar tu acceso al panel web.",
+            delete_after=20
         )
     except Exception as e:
-        log.error(f"mi_usuario: {e}")
+        log.error(f"mi_usuario staff_registrar: {e}")
         await ctx.send("❌ Error al registrar. Intenta de nuevo.", delete_after=10)
+        return
+
+    # ── Flujo de contraseña por DM ────────────────────────────────────────
+    try:
+        dm = await ctx.author.create_dm()
+        await dm.send(
+            f"👋 ¡Hola **{ctx.author.display_name}**! Fuiste registrado en **Crimson Scan** como `{nombre_form}`.\n\n"
+            f"Para activar tu acceso al panel web, escribe aquí tu contraseña (mínimo 6 caracteres).\n"
+            f"⚠️ No la compartas con nadie."
+        )
+
+        def check_dm(m):
+            return m.author == ctx.author and isinstance(m.channel, discord.DMChannel)
+
+        msg_pass = await bot.wait_for('message', check=check_dm, timeout=120)
+        password = msg_pass.content.strip()
+
+        if len(password) < 6:
+            await dm.send("❌ La contraseña debe tener al menos **6 caracteres**. Usa `cd!mi_usuario` de nuevo para intentarlo.")
+            return
+
+        rol_panel = 'admin' if rol_final in ('Lider', 'Supervisor') else 'staff'
+        db.usuario_panel_crear(nombre_form, password, rol=rol_panel)
+        await dm.send(
+            f"✅ **¡Acceso al panel activado!**\n\n"
+            f"🌐 **Panel:** https://scancrimson.vercel.app\n"
+            f"👤 **Usuario:** `{nombre_form}`\n"
+            f"🔑 **Contraseña:** la que acabas de escribir\n\n"
+            f"Guarda estos datos. Si olvidás tu contraseña, pídele al admin que te la resetee."
+        )
+        log.info(f"[Panel] Cuenta creada/actualizada: {nombre_form} ({ctx.author.display_name})")
+
+    except discord.Forbidden:
+        await ctx.send(
+            f"⚠️ {ctx.author.mention} No pude enviarte un DM. Activa los mensajes directos del servidor "
+            f"y usa `cd!mi_usuario {nombre_form}` de nuevo.",
+            delete_after=20
+        )
+    except asyncio.TimeoutError:
+        try:
+            await ctx.author.send("⏱️ Tiempo agotado. Usa `cd!mi_usuario` de nuevo cuando estés listo.")
+        except discord.Forbidden:
+            pass
 
 @bot.command()
 @commands.has_permissions(administrator=True)

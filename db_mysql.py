@@ -8,6 +8,7 @@ import pymysql
 import pymysql.cursors
 import logging
 import os
+import bcrypt
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -131,6 +132,15 @@ def staff_listar():
 
 def staff_toggle(discord_id: int, activo: int):
     _exec("UPDATE staff_discord SET activo=%s WHERE discord_id=%s", (activo, discord_id))
+
+def usuario_panel_crear(usuario: str, password: str, rol: str = 'staff'):
+    """Crea o actualiza la cuenta del panel web. No pisa el rol si ya existe."""
+    hash_pass = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    _exec(
+        "INSERT INTO usuarios (usuario, password, rol) VALUES (%s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE password=%s",
+        (usuario, hash_pass, rol, hash_pass)
+    )
 
 
 # ══════════════════════════════════════════════════════════════
