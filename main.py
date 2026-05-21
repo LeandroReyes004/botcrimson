@@ -624,6 +624,8 @@ async def mi_usuario(ctx, *, nombre_form: str):
                 prio_idx  = idx
                 rol_final = norm
 
+    roles_detectados = [r.name for r in ctx.author.roles if r.name != "@everyone"]
+
     try:
         db.staff_registrar(
             discord_id=uid,
@@ -631,10 +633,11 @@ async def mi_usuario(ctx, *, nombre_form: str):
             nombre_display=ctx.author.display_name,
             rol=rol_final
         )
+        roles_txt = ", ".join(f"`{r}`" for r in roles_detectados) if roles_detectados else "_ninguno_"
         await ctx.send(
             f"✅ **{ctx.author.mention}** registrado como `{nombre_form}` — Rol: **{rol_final}**\n"
-            f"El bot te reconocerá automáticamente cuando entregues.",
-            delete_after=15
+            f"🔎 Roles detectados: {roles_txt}",
+            delete_after=30
         )
     except Exception as e:
         log.error(f"mi_usuario: {e}")
