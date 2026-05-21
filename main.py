@@ -597,18 +597,42 @@ async def set_canal(ctx, canal: discord.TextChannel = None):
 async def mi_usuario(ctx, *, nombre_form: str):
     """
     Vincula tu usuario del formulario con tu cuenta de Discord.
+    Lee tus roles del servidor automáticamente.
     Uso: cd!mi_usuario nvto
     """
     nombre_form = nombre_form.strip().lower()
     uid = ctx.author.id
+
+    # Mapear roles de Discord al rol del sistema (case-insensitive)
+    MAPA_ROLES = {
+        'lider': 'Lider', 'líder': 'Lider',
+        'supervisor': 'Supervisor',
+        'qc': 'QC', 'quality control': 'QC',
+        'typesetter': 'Typesetter', 'typer': 'Typesetter',
+        'limpiador': 'Limpiador', 'cleaner': 'Limpiador',
+        'traductor': 'Traductor', 'translator': 'Traductor',
+    }
+    PRIORIDAD = ['Lider', 'Supervisor', 'QC', 'Typesetter', 'Limpiador', 'Traductor', 'Staff']
+
+    rol_final = 'Staff'
+    prio_idx  = len(PRIORIDAD)
+    for r in ctx.author.roles:
+        norm = MAPA_ROLES.get(r.name.lower().strip())
+        if norm:
+            idx = PRIORIDAD.index(norm)
+            if idx < prio_idx:
+                prio_idx  = idx
+                rol_final = norm
+
     try:
         db.staff_registrar(
             discord_id=uid,
             usuario_form=nombre_form,
-            nombre_display=ctx.author.display_name
+            nombre_display=ctx.author.display_name,
+            rol=rol_final
         )
         await ctx.send(
-            f"✅ **{ctx.author.mention}** registrado como `{nombre_form}`.\n"
+            f"✅ **{ctx.author.mention}** registrado como `{nombre_form}` — Rol: **{rol_final}**\n"
             f"El bot te reconocerá automáticamente cuando entregues.",
             delete_after=15
         )

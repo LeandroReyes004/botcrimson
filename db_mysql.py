@@ -73,26 +73,43 @@ def config_set(clave, valor):
 #  STAFF DISCORD
 # ══════════════════════════════════════════════════════════════
 
-def staff_registrar(discord_id: int, usuario_form, nombre_display: str):
+def staff_registrar(discord_id: int, usuario_form, nombre_display: str, rol: str = None):
     """
     Vincula o actualiza un miembro de Discord.
     Si usuario_form es None, solo actualiza nombre_display sin pisar el apodo existente.
+    Si rol es None, no pisa el rol existente.
     """
     if usuario_form is not None:
         uf = usuario_form.lower().strip()
-        _exec(
-            "INSERT INTO staff_discord (discord_id, usuario_form, nombre_display) "
-            "VALUES (%s, %s, %s) "
-            "ON DUPLICATE KEY UPDATE usuario_form=%s, nombre_display=%s",
-            (discord_id, uf, nombre_display, uf, nombre_display)
-        )
+        if rol:
+            _exec(
+                "INSERT INTO staff_discord (discord_id, usuario_form, nombre_display, rol) "
+                "VALUES (%s, %s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE usuario_form=%s, nombre_display=%s, rol=%s",
+                (discord_id, uf, nombre_display, rol, uf, nombre_display, rol)
+            )
+        else:
+            _exec(
+                "INSERT INTO staff_discord (discord_id, usuario_form, nombre_display) "
+                "VALUES (%s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE usuario_form=%s, nombre_display=%s",
+                (discord_id, uf, nombre_display, uf, nombre_display)
+            )
     else:
-        _exec(
-            "INSERT INTO staff_discord (discord_id, nombre_display) "
-            "VALUES (%s, %s) "
-            "ON DUPLICATE KEY UPDATE nombre_display=%s",
-            (discord_id, nombre_display, nombre_display)
-        )
+        if rol:
+            _exec(
+                "INSERT INTO staff_discord (discord_id, nombre_display, rol) "
+                "VALUES (%s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE nombre_display=%s, rol=%s",
+                (discord_id, nombre_display, rol, nombre_display, rol)
+            )
+        else:
+            _exec(
+                "INSERT INTO staff_discord (discord_id, nombre_display) "
+                "VALUES (%s, %s) "
+                "ON DUPLICATE KEY UPDATE nombre_display=%s",
+                (discord_id, nombre_display, nombre_display)
+            )
 
 def staff_get_by_form(usuario_form: str):
     return _exec(
