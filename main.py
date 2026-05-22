@@ -74,6 +74,59 @@ ROL_ETAPA_DRIVE = {
     "Proofreader": "05. Control de Calidad",
 }
 
+# ── Roles y permisos ──────────────────────────────────────────────────────────
+MAPA_ROLES = {
+    'admin': 'Lider', 'administrator': 'Lider',
+    'lider': 'Lider', 'leader': 'Lider', 'rey': 'Lider',
+    'supervisor': 'Supervisor',
+    'qc': 'QC', 'quality control': 'QC',
+    'typesetter': 'Typesetter', 'typer': 'Typesetter',
+    'limpiador': 'Limpiador', 'cleaner': 'Limpiador', 'redrawer': 'Limpiador',
+    'traductor': 'Traductor', 'translator': 'Traductor',
+}
+PRIORIDAD = ['Lider', 'Supervisor', 'QC', 'Typesetter', 'Limpiador', 'Traductor', 'Staff']
+
+def limpiar(s):
+    s = unicodedata.normalize('NFKD', s)
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    return s.lower().strip()
+
+def rol_de_miembro(member: discord.Member) -> str:
+    """Devuelve el rol de mayor prioridad del miembro según MAPA_ROLES."""
+    encontrados = []
+    for r in member.roles:
+        nombre = limpiar(r.name)
+        mapped = MAPA_ROLES.get(nombre)
+        if not mapped:
+            for key, val in MAPA_ROLES.items():
+                if key in nombre:
+                    mapped = val
+                    break
+        if mapped and mapped not in encontrados:
+            encontrados.append(mapped)
+    encontrados.sort(key=lambda x: PRIORIDAD.index(x) if x in PRIORIDAD else 99)
+    return encontrados[0] if encontrados else 'Staff'
+
+async def verificar_permiso(ctx, cmd_name: str) -> bool:
+    """Lee el nivel permitido desde config_bot y verifica el rol del usuario."""
+    try:
+        nivel = db.config_get(f'cmd_perm_{cmd_name}', default='admin')
+    except Exception:
+        nivel = 'admin'
+
+    if nivel == 'all':
+        return True
+
+    rol = rol_de_miembro(ctx.author)
+    if nivel == 'supervisor':
+        ok = rol in ('Lider', 'Supervisor')
+    else:  # 'admin'
+        ok = rol == 'Lider'
+
+    if not ok:
+        await ctx.send("🚫 No tienes permisos para usar ese comando.", delete_after=7)
+    return ok
+
 sheet_client      = None
 hoja_asignaciones = None
 hoja_ranking      = None
@@ -604,23 +657,6 @@ async def mi_usuario(ctx, *, nombre_form: str):
     nombre_form = nombre_form.strip().lower()
     uid = ctx.author.id
 
-    # Mapear roles de Discord al rol del sistema (case-insensitive)
-    MAPA_ROLES = {
-        'admin': 'Lider', 'administrator': 'Lider',
-        'lider': 'Lider', 'leader': 'Lider', 'rey': 'Lider',
-        'supervisor': 'Supervisor',
-        'qc': 'QC', 'quality control': 'QC',
-        'typesetter': 'Typesetter', 'typer': 'Typesetter',
-        'limpiador': 'Limpiador', 'cleaner': 'Limpiador', 'redrawer': 'Limpiador',
-        'traductor': 'Traductor', 'translator': 'Traductor',
-    }
-    PRIORIDAD = ['Lider', 'Supervisor', 'QC', 'Typesetter', 'Limpiador', 'Traductor', 'Staff']
-
-    def limpiar(s):
-        s = unicodedata.normalize('NFKD', s)
-        s = ''.join(c for c in s if not unicodedata.combining(c))
-        return s.lower().strip()
-
     roles_encontrados = []
     for r in ctx.author.roles:
         nombre_limpio = limpiar(r.name)
@@ -701,9 +737,9 @@ async def mi_usuario(ctx, *, nombre_form: str):
             pass
 
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def ver_usuarios(ctx):
     """Muestra el staff registrado en MySQL (solo admin)"""
+    if not await verificar_permiso(ctx, 'ver_usuarios'): return
     lista = db.staff_listar()
     if not lista:
         return await ctx.send("⚠️ Ningún staff registrado aún.", delete_after=10)
@@ -719,9 +755,9 @@ async def ver_usuarios(ctx):
     await ctx.send(embed=embed)
 
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def nueva_obra(ctx, *, nombre: str):
     """Registra una serie y crea su carpeta en Google Drive automáticamente"""
+    if not await verificar_permiso(ctx, 'nueva_obra'): return
     await ctx.message.delete()
     nombre_up    = nombre.strip().upper()
     nombre_drive = nombre.strip()
@@ -865,9 +901,9 @@ async def series(ctx):
     await ctx.send(embed=embed)
 
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def importar(ctx, *, contenido: str):
     """Importa capítulos a una serie. Formato: cd!importar Obra 1 2 3"""
+    if not await verificar_permiso(ctx, 'importar'): return
     await ctx.message.delete()
     match = re.search(r'\d', contenido)
     if not match:
@@ -902,6 +938,7 @@ ROLES_DISP = ["Traductor", "Cleaner", "Typer", "Proofreader"]
 @bot.command()
 async def orden(ctx):
     """Asignación de tareas paso a paso (proyectos desde Google Drive)"""
+    if not await verificar_permiso(ctx, 'orden'): return
     def check(m):
         return m.author == ctx.author and m.channel == ctx.channel
 
@@ -1021,6 +1058,7 @@ async def orden(ctx):
 @bot.command()
 async def reportar(ctx, usuario: discord.Member, *, error: str):
     """Registra un error a un miembro del staff"""
+    if not await verificar_permiso(ctx, 'reportar'): return
     db.staff_registrar(usuario.id, None, usuario.display_name)
     db.error_registrar(usuario.id, error, reportado_por=ctx.author.id)
     embed = discord.Embed(
@@ -1179,9 +1217,9 @@ async def estadisticas(ctx):
     await ctx.send(embed=embed)
 
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def aviso_staff(ctx, *, mensaje: str):
     """Anuncio global al staff"""
+    if not await verificar_permiso(ctx, 'aviso_staff'): return
     await ctx.message.delete()
     embed = discord.Embed(
         title="⚠️ AVISO GENERAL DEL STAFF",
@@ -1284,9 +1322,9 @@ async def estado(ctx, *, args: str):
     await ctx.send(embed=embed)
 
 @bot.command(name="tareas")
-@commands.has_permissions(administrator=True)
 async def ver_tareas_usuario(ctx, usuario: discord.Member):
     """(Admin) Muestra todas las tareas activas de un miembro especifico"""
+    if not await verificar_permiso(ctx, 'tareas'): return
     sus_tareas = db.tarea_get_por_usuario(usuario.id)
     if not sus_tareas:
         return await ctx.send(f"💭 {usuario.mention} no tiene tareas activas.", delete_after=7)
@@ -1305,9 +1343,9 @@ async def ver_tareas_usuario(ctx, usuario: discord.Member):
     await ctx.send(embed=embed)
 
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def cancelar(ctx, usuario: discord.Member):
     """(Admin) Cancela todas las tareas activas de un miembro"""
+    if not await verificar_permiso(ctx, 'cancelar'): return
     await ctx.message.delete()
     tareas = db.tarea_get_por_usuario(usuario.id)
     if not tareas:
@@ -1326,12 +1364,12 @@ async def cancelar(ctx, usuario: discord.Member):
     await ctx.send(embed=embed)
 
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def extender(ctx, usuario: discord.Member, dias: int = 1):
     """
     (Admin) Extiende el plazo de las tareas de un miembro X días.
     Uso: cd!extender @usuario 2
     """
+    if not await verificar_permiso(ctx, 'extender'): return
     await ctx.message.delete()
     tareas = db.tarea_get_por_usuario(usuario.id)
     if not tareas:
