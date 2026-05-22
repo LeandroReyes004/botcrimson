@@ -952,19 +952,12 @@ async def orden(ctx):
             return await ctx.send(f"❌ Número inválido (1-{len(ROLES_DISP)}).", delete_after=7)
         rol = ROLES_DISP[int(msg_r.content) - 1]
 
-        # Paso 2: Obra — desde Google Drive en tiempo real
-        cargando = await ctx.send("🔄 Cargando proyectos desde Drive...")
-        loop = asyncio.get_event_loop()
-        proyectos_drive, drive_err = await loop.run_in_executor(None, drive_listar_proyectos)
-        await cargando.delete()
+        # Paso 2: Obra — desde MySQL
+        proyectos_db = db.proyecto_listar(solo_activos=True)
+        if not proyectos_db:
+            return await ctx.send("❌ No hay proyectos activos en la base de datos.", delete_after=10)
 
-        if drive_err or not proyectos_drive:
-            return await ctx.send(
-                f"❌ No se pudieron cargar los proyectos de Drive: {drive_err or 'lista vacía'}.",
-                delete_after=10
-            )
-
-        obras_list = [p["name"] for p in proyectos_drive]
+        obras_list = [p["nombre"] for p in proyectos_db]
         desc_obras = "\n".join([f"**{i+1}**. {o}" for i, o in enumerate(obras_list)])
         if len(desc_obras) > 3900:
             obras_list = obras_list[:30]
@@ -1043,8 +1036,8 @@ async def orden(ctx):
         embed_orden.add_field(name="🔢 Capítulo", value=cap,          inline=True)
         embed_orden.add_field(name="🎭 Rol",      value=rol,          inline=True)
         embed_orden.add_field(name="⏳ Vence",    value=f"<t:{int(vence.timestamp())}:R>", inline=True)
-        embed_orden.set_footer(text="📋 Registrado en MySQL y Sheets  |  Entrega por formulario o cd!terminado")
-        await ctx.send(content=user.mention, embed=embed_orden)
+        embed_orden.set_footer(text="📋 Registrado en MySQL  |  Entrega con cd!terminado  |  Se borra en 50 min")
+        await ctx.send(content=user.mention, embed=embed_orden, delete_after=3000)
 
     except asyncio.TimeoutError:
         await ctx.send("⏱️ Tiempo agotado. Usa `cd!orden` de nuevo.", delete_after=10)
