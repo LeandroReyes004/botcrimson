@@ -133,6 +133,14 @@ hoja_ranking      = None
 hoja_formulario   = None
 drive_service     = None
 
+# --- WATCHDOG ─────────────────────────────────────────────────────────────────
+_ultimo_latido: datetime = datetime.now()
+WATCHDOG_TIMEOUT_DEFAULT = 15  # minutos sin heartbeat antes de reiniciar
+
+def _actualizar_latido():
+    global _ultimo_latido
+    _ultimo_latido = datetime.now()
+
 # ── Google Drive API ──────────────────────────────────────────────────────────
 
 def conectar_drive():
@@ -417,10 +425,13 @@ if sheets_ok and not db.formulario_ya_procesado("__init__"):
 @bot.event
 async def on_ready():
     global CANAL_ALERTAS_ID
+    _actualizar_latido()
     if not monitor_tiempos.is_running():
         monitor_tiempos.start()
     if not recordatorio_diario.is_running():
         recordatorio_diario.start()
+    if not watchdog_check.is_running():
+        watchdog_check.start()
 
     canal_db = db.config_get("canal_alertas", "0")
     if canal_db and canal_db != "0":
@@ -430,6 +441,12 @@ async def on_ready():
     estado_d = "✅ Drive OK"   if drive_ok  else "⚠️ Drive SIN conexión"
     print(f"✅ Crimson Manager Online | {estado_s} | {estado_d} | MySQL ✅")
     log.info(f"Online | {estado_s} | {estado_d}")
+
+@bot.event
+async def on_message(message):
+    if not message.author.bot:
+        _actualizar_latido()
+    await bot.process_commands(message)
 
 # --- HELPER: canal de alertas ────────────────────────────────────────────────
 
@@ -535,6 +552,7 @@ async def verificar_formulario_y_procesar():
 
 @tasks.loop(minutes=5)
 async def monitor_tiempos():
+    _actualizar_latido()
     ahora = datetime.now()
     loop  = asyncio.get_event_loop()
 
@@ -580,6 +598,30 @@ async def monitor_tiempos():
 @monitor_tiempos.error
 async def monitor_error(error):
     log.error(f"[Monitor] Error crítico: {error}")
+
+# --- WATCHDOG: reinicia el bot si monitor_tiempos deja de latir ──────────────
+
+@tasks.loop(minutes=1)
+async def watchdog_check():
+    timeout_min = int(db.config_get("watchdog_timeout_min", str(WATCHDOG_TIMEOUT_DEFAULT)))
+    inactivo    = (datetime.now() - _ultimo_latido).total_seconds() / 60
+    if inactivo >= timeout_min:
+        log.error(f"[Watchdog] Sin heartbeat por {inactivo:.0f} min (límite {timeout_min} min). Reiniciando...")
+        canal_id = get_canal_alertas_id()
+        if canal_id:
+            canal = bot.get_channel(canal_id)
+            if canal:
+                try:
+                    await canal.send(
+                        f"⚠️ **Bot sin respuesta por {inactivo:.0f} minutos** — reiniciando automáticamente..."
+                    )
+                except Exception:
+                    pass
+        await bot.close()
+
+@watchdog_check.error
+async def watchdog_error(error):
+    log.error(f"[Watchdog] Error: {error}")
 
 # --- RECORDATORIO DIARIO (9:00 AM) ───────────────────────────────────────────
 
