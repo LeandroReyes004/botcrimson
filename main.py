@@ -33,6 +33,7 @@ bot = commands.Bot(command_prefix='cd!', intents=intents, help_command=None)
 COLOR_CRIMSON = 0x660000
 
 CANAL_ALERTAS_ID = int(os.getenv("CANAL_ALERTAS_ID", "0")) or None
+CANAL_HIATUS_ID  = int(os.getenv("CANAL_HIATUS_ID",  "0")) or None
 
 ETAPA_ROL_MAP = {
     "raws":          "Cleaner",
@@ -1522,6 +1523,83 @@ async def cancelar(ctx, usuario: discord.Member):
         color=0xff6600
     )
     view = CancelarView()
+    msg = await ctx.send(embed=embed, view=view)
+    view.msg = msg
+
+@bot.command()
+async def hiatus(ctx):
+    """(Staff) Registra un miembro en hiatus mediante formulario."""
+    if not await verificar_permiso(ctx, 'hiatus'): return
+
+    class HiatusModal(discord.ui.Modal, title="🌙 Registrar Staff Hiatus"):
+        nombre = discord.ui.TextInput(
+            label="👤 Nombre del miembro",
+            placeholder="Ej: @Usuario o Nombre#1234",
+            max_length=100
+        )
+        desde = discord.ui.TextInput(
+            label="📆 Desde (fecha)",
+            placeholder="Ej: 10/06/2026",
+            max_length=50
+        )
+        tiempo = discord.ui.TextInput(
+            label="⏳ Tiempo estimado",
+            placeholder="Ej: 2 semanas, 1 mes...",
+            max_length=100
+        )
+        razon = discord.ui.TextInput(
+            label="📖 Razón",
+            placeholder="Motivo del hiatus...",
+            style=discord.TextStyle.paragraph,
+            max_length=300
+        )
+
+        async def on_submit(self, interaction: discord.Interaction):
+            canal = interaction.guild.get_channel(CANAL_HIATUS_ID) if CANAL_HIATUS_ID else None
+            if not canal:
+                return await interaction.response.send_message(
+                    "❌ Canal de hiatus no configurado. Agrega `CANAL_HIATUS_ID` al `.env`.",
+                    ephemeral=True
+                )
+            descripcion = (
+                "╭───────────── ⭒ ─────────────╮\n"
+                "        🌙 **𝐒𝐓𝐀𝐅𝐅 𝐇𝐈𝐀𝐓𝐔𝐒**\n"
+                "╰───────────── ⭒ ─────────────╯\n\n"
+                f"👤 **Nombre:** {self.nombre.value}\n"
+                f"📆 **Desde:** {self.desde.value}\n"
+                f"⏳ **Tiempo estimado:** {self.tiempo.value}\n"
+                f"📖 **Razón:** {self.razon.value}\n\n"
+                "El miembro mencionado estará ausente\n"
+                "temporalmente de sus actividades.\n\n"
+                "✨ Gracias por su comprensión."
+            )
+            embed = discord.Embed(description=descripcion, color=0x4b0082)
+            await canal.send(embed=embed)
+            await interaction.response.send_message("✅ Hiatus publicado correctamente.", ephemeral=True)
+
+    class HiatusView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=120)
+
+        @discord.ui.button(label="📝 Llenar formulario", style=discord.ButtonStyle.primary)
+        async def abrir(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("❌ Solo el autor puede usar esto.", ephemeral=True)
+            await interaction.response.send_modal(HiatusModal())
+            self.stop()
+
+        async def on_timeout(self):
+            for child in self.children:
+                child.disabled = True
+            if hasattr(self, "msg"):
+                await self.msg.edit(view=self)
+
+    embed = discord.Embed(
+        title="🌙 Registrar Hiatus de Staff",
+        description="Haz clic en el botón para completar el formulario.",
+        color=0x4b0082
+    )
+    view = HiatusView()
     msg = await ctx.send(embed=embed, view=view)
     view.msg = msg
 
