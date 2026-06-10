@@ -1529,7 +1529,6 @@ async def cancelar(ctx, usuario: discord.Member):
 @bot.command()
 async def hiatus(ctx):
     """(Staff) Registra un miembro en hiatus mediante formulario."""
-    if not await verificar_permiso(ctx, 'hiatus'): return
 
     class HiatusModal(discord.ui.Modal, title="🌙 Registrar Staff Hiatus"):
         nombre = discord.ui.TextInput(
@@ -1555,7 +1554,8 @@ async def hiatus(ctx):
         )
 
         async def on_submit(self, interaction: discord.Interaction):
-            canal = interaction.guild.get_channel(CANAL_HIATUS_ID) if CANAL_HIATUS_ID else None
+            canal_id = int(db.config_get("canal_hiatus", "0") or "0") or CANAL_HIATUS_ID
+            canal = interaction.guild.get_channel(canal_id) if canal_id else None
             if not canal:
                 return await interaction.response.send_message(
                     "❌ Canal de hiatus no configurado. Agrega `CANAL_HIATUS_ID` al `.env`.",
@@ -1602,6 +1602,15 @@ async def hiatus(ctx):
     view = HiatusView()
     msg = await ctx.send(embed=embed, view=view)
     view.msg = msg
+
+@bot.command(name="set_canal_hiatus")
+@commands.has_permissions(administrator=True)
+async def set_canal_hiatus(ctx, canal: discord.TextChannel = None):
+    """Configura el canal donde se publican los avisos de hiatus."""
+    canal = canal or ctx.channel
+    db.config_set("canal_hiatus", canal.id)
+    await ctx.send(f"✅ Canal de hiatus configurado: {canal.mention}", delete_after=10)
+
 
 @bot.command()
 async def extender(ctx, usuario: discord.Member, dias: int = 1):
@@ -1655,6 +1664,7 @@ async def help_cmd(ctx):
     embed.add_field(name="`cd!terminado`",             value="Marcar tu tarea como hecha", inline=True)
     embed.add_field(name="`cd!ranking`",               value="Ranking mensual del staff", inline=True)
     embed.add_field(name="`cd!mi_usuario <nombre>`",   value="Vincular apodo del formulario", inline=True)
+    embed.add_field(name="`cd!hiatus`",                value="Publicar aviso de hiatus 🌙", inline=True)
 
     embed.set_footer(text="Continua en el siguiente mensaje ⤵️")
     await ctx.send(embed=embed)
@@ -1664,7 +1674,8 @@ async def help_cmd(ctx):
     embed2.add_field(name="`cd!tareas @usuario`",       value="Ver tareas de cualquier miembro", inline=True)
     embed2.add_field(name="`cd!cancelar @usuario`",     value="Cancela todas las tareas de un miembro", inline=True)
     embed2.add_field(name="`cd!extender @usuario <N>`", value="Extiende plazo N días", inline=True)
-    embed2.add_field(name="`cd!set_canal #canal`",      value="Canal para alertas y recordatorios", inline=True)
+    embed2.add_field(name="`cd!set_canal #canal`",         value="Canal para alertas y recordatorios", inline=True)
+    embed2.add_field(name="`cd!set_canal_hiatus #canal`", value="Canal para avisos de hiatus 🌙", inline=True)
     embed2.add_field(name="`cd!ver_usuarios`",          value="Staff registrado en MySQL", inline=True)
     embed2.add_field(name="`cd!aviso_staff <msg>`",     value="Anuncio general al servidor", inline=True)
 
