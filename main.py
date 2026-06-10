@@ -1115,23 +1115,82 @@ async def listo(ctx):
     if not tareas:
         return await ctx.send("⚠️ No tienes tareas activas.", delete_after=7)
 
-    tarea  = tareas[0]
-    puntos = db.tarea_completar(tarea["id"])
+    if len(tareas) == 1:
+        tarea  = tareas[0]
+        puntos = db.tarea_completar(tarea["id"])
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, sheets_marcar_entregado, tarea["id"])
+        await loop.run_in_executor(None, sheets_actualizar_ranking, uid, ctx.author.display_name, puntos)
+        embed = discord.Embed(
+            title="✅ ¡Tarea entregada!",
+            description=(
+                f"**Obra:** {tarea['obra']}\n"
+                f"**Capítulo:** {tarea['cap']} — {tarea['rol']}\n"
+                f"**Puntos del mes:** {puntos} 🏅"
+            ),
+            color=0x00b300
+        )
+        return await ctx.send(embed=embed)
 
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, sheets_marcar_entregado, tarea["id"])
-    await loop.run_in_executor(None, sheets_actualizar_ranking, uid, ctx.author.display_name, puntos)
+    options = []
+    for t in tareas:
+        limite_dt = t["limite"] if isinstance(t["limite"], datetime) \
+                    else datetime.fromisoformat(str(t["limite"]))
+        label = f"{t['obra']} — Cap {t['cap']} ({t['rol']})"[:100]
+        options.append(discord.SelectOption(
+            label=label,
+            value=t["id"],
+            description=f"Vence: {limite_dt.strftime('%Y-%m-%d')}"
+        ))
+
+    class ListoSelect(discord.ui.Select):
+        def __init__(self):
+            super().__init__(
+                placeholder="Selecciona la tarea que terminaste...",
+                options=options, min_values=1, max_values=1
+            )
+        async def callback(self, interaction: discord.Interaction):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("❌ Solo el autor puede usar esto.", ephemeral=True)
+            tarea_id = self.values[0]
+            tarea = db.tarea_get(tarea_id)
+            if not tarea:
+                return await interaction.response.send_message("❌ Tarea no encontrada.", ephemeral=True)
+            await interaction.response.defer()
+            puntos = db.tarea_completar(tarea_id)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, sheets_marcar_entregado, tarea_id)
+            await loop.run_in_executor(None, sheets_actualizar_ranking, uid, ctx.author.display_name, puntos)
+            embed = discord.Embed(
+                title="✅ ¡Tarea entregada!",
+                description=(
+                    f"**Obra:** {tarea['obra']}\n"
+                    f"**Capítulo:** {tarea['cap']} — {tarea['rol']}\n"
+                    f"**Puntos del mes:** {puntos} 🏅"
+                ),
+                color=0x00b300
+            )
+            await ctx.send(embed=embed)
+            self.view.stop()
+
+    class ListoView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=60)
+            self.add_item(ListoSelect())
+        async def on_timeout(self):
+            for child in self.children:
+                child.disabled = True
+            if hasattr(self, "msg"):
+                await self.msg.edit(view=self)
 
     embed = discord.Embed(
-        title="✅ ¡Tarea entregada!",
-        description=(
-            f"**Obra:** {tarea['obra']}\n"
-            f"**Capítulo:** {tarea['cap']} — {tarea['rol']}\n"
-            f"**Puntos del mes:** {puntos} 🏅"
-        ),
+        title="✅ ¿Qué tarea terminaste?",
+        description="Selecciona la tarea que deseas marcar como completada:",
         color=0x00b300
     )
-    await ctx.send(embed=embed)
+    view = ListoView()
+    msg = await ctx.send(embed=embed, view=view)
+    view.msg = msg
 
 @bot.command()
 async def terminado(ctx):
@@ -1379,24 +1438,92 @@ async def ver_tareas_usuario(ctx, usuario: discord.Member):
 
 @bot.command()
 async def cancelar(ctx, usuario: discord.Member):
-    """(Admin) Cancela todas las tareas activas de un miembro"""
+    """(Admin) Cancela tarea(s) de un miembro, con selección si tiene varias"""
     if not await verificar_permiso(ctx, 'cancelar'): return
     await ctx.message.delete()
     tareas = db.tarea_get_por_usuario(usuario.id)
     if not tareas:
         return await ctx.send(f"❌ {usuario.mention} no tiene tareas activas.", delete_after=7)
 
-    loop = asyncio.get_running_loop()
+    async def _cancelar_una(tarea_id: str):
+        db.tarea_cancelar(tarea_id)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, sheets_marcar_cancelado, tarea_id)
+
+    if len(tareas) == 1:
+        t = tareas[0]
+        await _cancelar_una(t["id"])
+        embed = discord.Embed(
+            title="🗑️ TAREA CANCELADA",
+            description=f"Se canceló **{t['rol']}** de `{t['obra']}` Cap {t['cap']} de {usuario.mention}.",
+            color=0xff6600
+        )
+        return await ctx.send(embed=embed)
+
+    options = [
+        discord.SelectOption(
+            label="❌ Cancelar TODAS",
+            value="__ALL__",
+            description=f"Cancela las {len(tareas)} tareas activas"
+        )
+    ]
     for t in tareas:
-        db.tarea_cancelar(t["id"])
-        await loop.run_in_executor(None, sheets_marcar_cancelado, t["id"])
+        label = f"{t['obra']} — Cap {t['cap']} ({t['rol']})"[:100]
+        options.append(discord.SelectOption(
+            label=label,
+            value=t["id"],
+            description=f"Vence: {str(t['limite'])[:10]}"
+        ))
+
+    class CancelarSelect(discord.ui.Select):
+        def __init__(self):
+            super().__init__(
+                placeholder="Selecciona la tarea a cancelar...",
+                options=options, min_values=1, max_values=1
+            )
+        async def callback(self, interaction: discord.Interaction):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("❌ Solo el autor puede usar esto.", ephemeral=True)
+            await interaction.response.defer()
+            if self.values[0] == "__ALL__":
+                for t in tareas:
+                    await _cancelar_una(t["id"])
+                embed = discord.Embed(
+                    title="🗑️ TAREAS CANCELADAS",
+                    description=f"Se cancelaron **{len(tareas)} tarea(s)** de {usuario.mention}.",
+                    color=0xff6600
+                )
+            else:
+                tarea = db.tarea_get(self.values[0])
+                if not tarea:
+                    return await interaction.followup.send("❌ Tarea no encontrada.", ephemeral=True)
+                await _cancelar_una(tarea["id"])
+                embed = discord.Embed(
+                    title="🗑️ TAREA CANCELADA",
+                    description=f"Se canceló **{tarea['rol']}** de `{tarea['obra']}` Cap {tarea['cap']} de {usuario.mention}.",
+                    color=0xff6600
+                )
+            await interaction.followup.send(embed=embed)
+            self.view.stop()
+
+    class CancelarView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=60)
+            self.add_item(CancelarSelect())
+        async def on_timeout(self):
+            for child in self.children:
+                child.disabled = True
+            if hasattr(self, "msg"):
+                await self.msg.edit(view=self)
 
     embed = discord.Embed(
-        title="🗑️ TAREAS CANCELADAS",
-        description=f"Se cancelaron **{len(tareas)} tarea(s)** de {usuario.mention}.",
+        title=f"🗑️ Cancelar tarea de {usuario.display_name}",
+        description="Selecciona qué tarea deseas cancelar:",
         color=0xff6600
     )
-    await ctx.send(embed=embed)
+    view = CancelarView()
+    msg = await ctx.send(embed=embed, view=view)
+    view.msg = msg
 
 @bot.command()
 async def extender(ctx, usuario: discord.Member, dias: int = 1):
