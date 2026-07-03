@@ -423,6 +423,34 @@ if sheets_ok and not db.formulario_ya_procesado("__init__"):
     db.formulario_marcar("__init__")
 
 
+@tasks.loop(hours=1)
+async def task_check_hiatus():
+    try:
+        now = datetime.now()
+        rows = db._exec("SELECT discord_id FROM staff_discord WHERE hiatus_hasta IS NOT NULL AND hiatus_hasta <= %s", (now,), fetch="all")
+        if not rows: return
+        role_id = 1522687445391376597
+        for r in rows:
+            discord_id = r['discord_id']
+            for guild in bot.guilds:
+                member = guild.get_member(discord_id)
+                if member:
+                    role = guild.get_role(role_id)
+                    if role in member.roles:
+                        try: await member.remove_roles(role)
+                        except: pass
+            db._exec("UPDATE staff_discord SET hiatus_hasta = NULL WHERE discord_id = %s", (discord_id,))
+    except Exception as e:
+        log.error(f"Error en task_check_hiatus: {e}")
+
+@bot.event
+async def on_member_remove(member):
+    try:
+        db._exec("UPDATE staff_discord SET activo = 0 WHERE discord_id = %s", (member.id,))
+        log.info(f"Usuario {member.name} (ID: {member.id}) deshabilitado por salir del servidor.")
+    except Exception as e:
+        log.error(f"Error en on_member_remove: {e}")
+
 @bot.event
 async def on_ready():
     global CANAL_ALERTAS_ID
@@ -433,6 +461,8 @@ async def on_ready():
         recordatorio_diario.start()
     if not watchdog_check.is_running():
         watchdog_check.start()
+    if not task_check_hiatus.is_running():
+        task_check_hiatus.start()
 
     canal_db = db.config_get("canal_alertas", "0")
     if canal_db and canal_db != "0":
@@ -1542,8 +1572,8 @@ async def hiatus(ctx):
             max_length=50
         )
         tiempo = discord.ui.TextInput(
-            label="⏳ Tiempo estimado",
-            placeholder="Ej: 2 semanas, 1 mes...",
+            label="⏳ Tiempo estimado (N días/horas)",
+            placeholder="Ej: 7d (7 días) o 24h (24 horas)",
             max_length=100
         )
         razon = discord.ui.TextInput(
@@ -1554,6 +1584,27 @@ async def hiatus(ctx):
         )
 
         async def on_submit(self, interaction: discord.Interaction):
+            import re
+            tiempo_str = self.tiempo.value.strip().lower()
+            match = re.match(r'^(\d+)\s*([dhwm])$', tiempo_str)
+            if not match:
+                return await interaction.response.send_message("❌ Formato de tiempo inválido. Usa 'd' para días o 'h' para horas (ej: 7d).", ephemeral=True)
+            
+            val, unit = int(match.group(1)), match.group(2)
+            if unit == 'h': delta = timedelta(hours=val)
+            elif unit == 'd': delta = timedelta(days=val)
+            elif unit == 'w': delta = timedelta(weeks=val)
+            elif unit == 'm': delta = timedelta(days=val*30)
+            
+            hasta = datetime.now() + delta
+            role_id = 1522687445391376597
+            role = interaction.guild.get_role(role_id)
+            if role:
+                try: await interaction.user.add_roles(role)
+                except Exception as e: log.error(f"Error asignando rol hiatus: {e}")
+            
+            db._exec("UPDATE staff_discord SET hiatus_hasta = %s WHERE discord_id = %s", (hasta, interaction.user.id))
+
             canal_id = int(db.config_get("canal_hiatus", "0") or "0") or CANAL_HIATUS_ID
             canal = interaction.guild.get_channel(canal_id) if canal_id else None
             if not canal:
@@ -1565,17 +1616,16 @@ async def hiatus(ctx):
                 "╭───────────── ⭒ ─────────────╮\n"
                 "        🌙 **𝐒𝐓𝐀𝐅𝐅 𝐇𝐈𝐀𝐓𝐔𝐒**\n"
                 "╰───────────── ⭒ ─────────────╯\n\n"
-                f"👤 **Nombre:** {self.nombre.value}\n"
+                f"👤 **Nombre:** {self.nombre.value} (<@{interaction.user.id}>)\n"
                 f"📆 **Desde:** {self.desde.value}\n"
-                f"⏳ **Tiempo estimado:** {self.tiempo.value}\n"
+                f"⏳ **Tiempo estimado:** {self.tiempo.value} (hasta el {hasta.strftime('%d/%m/%Y %H:%M')})\n"
                 f"📖 **Razón:** {self.razon.value}\n\n"
-                "El miembro mencionado estará ausente\n"
-                "temporalmente de sus actividades.\n\n"
+                "El miembro estará ausente temporalmente de sus actividades.\n\n"
                 "✨ Gracias por su comprensión."
             )
             embed = discord.Embed(description=descripcion, color=0x4b0082)
             await canal.send(embed=embed)
-            await interaction.response.send_message("✅ Hiatus publicado correctamente.", ephemeral=True)
+            await interaction.response.send_message("✅ Hiatus publicado y asignado correctamente.", ephemeral=True)
 
     class HiatusView(discord.ui.View):
         def __init__(self):

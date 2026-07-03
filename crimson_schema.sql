@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS staff_discord (
     discord_id      BIGINT       PRIMARY KEY,           -- ID numérico de Discord
     usuario_form    VARCHAR(80)  NULL,                  -- nombre que usan en el formulario
     nombre_display  VARCHAR(150) NULL,                  -- nickname en Discord
+    rol             VARCHAR(100) NULL,
     activo          TINYINT(1)   DEFAULT 1,
+    hiatus_hasta    DATETIME     NULL,
     creado          DATETIME     DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_usuario_form (usuario_form)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
