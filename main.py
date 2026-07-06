@@ -235,7 +235,7 @@ def drive_listar_capitulos(proyecto_nombre):
         for etapa in etapas:
             cap_query = (
                 f"'{etapa['id']}' in parents and "
-                f"mimeType='application/vnd.google-apps.folder' and trashed=false"
+                f"trashed=false"
             )
             caps = drive_service.files().list(
                 q=cap_query, fields="files(name)", orderBy="name"
@@ -443,6 +443,39 @@ async def task_check_hiatus():
     except Exception as e:
         log.error(f"Error en task_check_hiatus: {e}")
 
+@tasks.loop(hours=12)
+async def task_auto_sync_drive():
+    if not drive_ok:
+        return
+    try:
+        log.info("[AutoSync] Iniciando escaneo de capítulos en Google Drive...")
+        proyectos = db.proyecto_listar(solo_activos=True)
+        loop = asyncio.get_event_loop()
+        
+        for proy in proyectos:
+            nombre = proy["nombre"]
+            resumen, error = await loop.run_in_executor(None, drive_listar_capitulos, nombre)
+            if error or not resumen:
+                continue
+            
+            raws = resumen.get("01. RAWs", [])
+            caps_detectados = set()
+            for r in raws:
+                m = re.search(r"cap[_\-\s]?0*(\d+)", r.lower())
+                if m:
+                    caps_detectados.add(m.group(1))
+            
+            if caps_detectados:
+                agregados, err_import = db.cap_importar(nombre, list(caps_detectados))
+                if agregados > 0:
+                    log.info(f"[AutoSync] {nombre}: agregados/actualizados {agregados} capítulos nuevos en BD.")
+            
+            await asyncio.sleep(1) # Be nice to Drive API
+            
+        log.info("[AutoSync] Escaneo automático de Drive finalizado.")
+    except Exception as e:
+        log.error(f"[AutoSync] Error general: {e}")
+
 @bot.event
 async def on_member_remove(member):
     try:
@@ -463,6 +496,8 @@ async def on_ready():
         watchdog_check.start()
     if not task_check_hiatus.is_running():
         task_check_hiatus.start()
+    if not task_auto_sync_drive.is_running():
+        task_auto_sync_drive.start()
 
     canal_db = db.config_get("canal_alertas", "0")
     if canal_db and canal_db != "0":
