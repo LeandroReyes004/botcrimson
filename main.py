@@ -1396,10 +1396,10 @@ async def estado(ctx, *, args: str):
     embed = discord.Embed(title=f"📊 ESTADO — {obra_raw} Cap {cap}", color=COLOR_CRIMSON)
 
     ROLES_STATUS = {
-        "Traductor":   ("traduccion", "🗒️ Traducción"),
-        "Cleaner":     ("limpieza",   "✨ Limpieza"),
-        "Typer":       ("typer",      "⌨️ Typeo"),
-        "Proofreader": ("proof",      "✅ Proofreading"),
+        "Traductor":   ("estado_trad", "🗒️ Traducción"),
+        "Cleaner":     ("estado_clean", "✨ Limpieza"),
+        "Typer":       ("estado_type", "⌨️ Typeo"),
+        "Proofreader": ("estado_proof", "✅ Proofreading"),
     }
 
     completados = 0

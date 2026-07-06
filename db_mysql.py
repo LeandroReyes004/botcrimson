@@ -251,18 +251,24 @@ def cap_marcar_etapa(nombre_proyecto: str, numero: str, etapa: str):
     proy = proyecto_get(nombre_proyecto)
     if not proy:
         return
-    etapas_validas = {"traduccion", "limpieza", "typer", "proof"}
+    etapas_validas = {
+        "traduccion": "estado_trad",
+        "limpieza": "estado_clean",
+        "typer": "estado_type",
+        "proof": "estado_proof"
+    }
     if etapa not in etapas_validas:
         return
+    campo_db = etapas_validas[etapa]
     _exec(
-        f"UPDATE capitulos SET {etapa}=1 WHERE proyecto_id=%s AND numero=%s",
+        f"UPDATE capitulos SET {campo_db}=1 WHERE proyecto_id=%s AND numero=%s",
         (proy["id"], numero)
     )
     # Si todas las etapas están completas, marcar como Terminado
     _exec(
         "UPDATE capitulos SET estado='Terminado' "
         "WHERE proyecto_id=%s AND numero=%s "
-        "AND traduccion=1 AND limpieza=1 AND typer=1 AND proof=1",
+        "AND estado_trad=1 AND estado_clean=1 AND estado_type=1 AND estado_proof=1",
         (proy["id"], numero)
     )
 
@@ -308,10 +314,10 @@ def tarea_completar(tarea_id: str):
     # Marcar etapa del capítulo si existe
     if tarea.get("capitulo_id"):
         etapa_map = {
-            "Traductor":   ("traduccion", "trad_fecha"),
-            "Cleaner":     ("limpieza",   "clean_fecha"),
-            "Typer":       ("typer",      "type_fecha"),
-            "Proofreader": ("proof",      "proof_fecha"),
+            "Traductor":   ("estado_trad", "trad_fecha"),
+            "Cleaner":     ("estado_clean", "clean_fecha"),
+            "Typer":       ("estado_type", "type_fecha"),
+            "Proofreader": ("estado_proof", "proof_fecha"),
         }
         campos = etapa_map.get(tarea["rol"])
         if campos:
