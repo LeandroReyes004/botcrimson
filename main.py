@@ -2011,6 +2011,70 @@ async def on_command_error(ctx, error):
         log.error(f"[Error] {ctx.command}: {error}")
         await ctx.send(f"❌ Ocurrió un error inesperado: `{str(error)[:100]}`", delete_after=10)
 
+# --- COMANDOS DE TEST MANUALES ───────────────────────────────────────────────
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def test_disponibles(ctx):
+    await ctx.send("Comprobando trabajos disponibles...")
+    disponibles = db.trabajos_disponibles()
+    if not disponibles:
+        return await ctx.send("No hay trabajos disponibles.")
+    embed = discord.Embed(title="📢 TRABAJOS DISPONIBLES (TEST)", color=0x00FF00)
+    lineas = []
+    for d in disponibles[:20]:
+        faltan = []
+        if d['estado_raw'] == 0: faltan.append("RAW")
+        if d['estado_trad'] == 0: faltan.append("Trad")
+        if d['estado_clean'] == 0: faltan.append("Clean")
+        if d['estado_type'] == 0: faltan.append("Type")
+        if d['estado_proof'] == 0: faltan.append("Proof")
+        if faltan:
+            lineas.append(f"• **{d['nombre']}** Cap {d['numero']} -> Faltan: `{', '.join(faltan)}`")
+    if lineas:
+        embed.add_field(name="Capítulos esperando", value="\n".join(lineas), inline=False)
+        await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def test_resumen(ctx):
+    await ctx.send("Generando resumen semanal...")
+    completadas = db.tareas_completadas_semana()
+    if not completadas:
+        return await ctx.send("No hay tareas entregadas esta semana.")
+    embed = discord.Embed(title="🏆 RESUMEN SEMANAL (TEST)", color=0xFFD700)
+    por_usuario = {}
+    for c in completadas:
+        user = c['nombre_display']
+        if user not in por_usuario: por_usuario[user] = []
+        por_usuario[user].append(f"{c['obra']} Cap {c['cap']} ({c['rol']})")
+    for user, tareas in list(por_usuario.items())[:15]:
+        embed.add_field(name=f"👤 {user} ({len(tareas)} entregas)", value="\n".join(f"• {t}" for t in tareas[:5]), inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def test_sync(ctx):
+    await ctx.send("🔄 Forzando Auto-Sync Drive. Esto puede demorar unos minutos...")
+    capitulos = db.capitulos_para_autosync()
+    if not capitulos:
+        return await ctx.send("No hay capítulos pendientes para sincronizar.")
+    exitosos, errores = 0, 0
+    url_base = "https://scancrimson.vercel.app/api.php?action=verificarDriveCapitulo&sync=1"
+    async with aiohttp.ClientSession() as session:
+        for cap in capitulos:
+            url = f"{url_base}&proyecto_id={cap['proyecto_id']}&capitulo_id={cap['id']}&capitulo_num={cap['numero']}"
+            try:
+                async with session.get(url, timeout=25) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get('exito'): exitosos += 1
+                        else: errores += 1
+                    else: errores += 1
+            except: errores += 1
+            await asyncio.sleep(2)
+    await ctx.send(f"✅ Sync finalizado: {len(capitulos)} verificados. ({exitosos} actualizados, {errores} errores).")
+
 # --- ARRANQUE ─────────────────────────────────────────────────────────────────
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
