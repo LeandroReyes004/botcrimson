@@ -479,8 +479,14 @@ async def task_auto_sync_drive():
 @bot.event
 async def on_member_remove(member):
     try:
-        db._exec("UPDATE staff_discord SET activo = 0 WHERE discord_id = %s", (member.id,))
-        log.info(f"Usuario {member.name} (ID: {member.id}) deshabilitado por salir del servidor.")
+        db._exec("UPDATE staff_discord SET activo = 0 WHERE discord_id = %s", (str(member.id),))
+        db._exec("""
+            UPDATE usuarios u
+            INNER JOIN staff_discord s ON u.usuario = s.usuario_form
+            SET u.activo = 0
+            WHERE s.discord_id = %s
+        """, (str(member.id),))
+        log.info(f"Usuario {member.name} (ID: {member.id}) deshabilitado en panel y base de datos por salir del servidor.")
     except Exception as e:
         log.error(f"Error en on_member_remove: {e}")
 
