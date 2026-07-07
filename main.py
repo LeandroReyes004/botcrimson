@@ -814,13 +814,6 @@ async def alerta_disponibles_diaria():
     if not disponibles:
         return
 
-    embed = discord.Embed(
-        title="📢 TRABAJOS DISPONIBLES",
-        description="¡Hay capítulos pendientes que necesitan staff! Aquí están los roles vacíos:",
-        color=0x00FF00,
-        timestamp=ahora
-    )
-    
     lineas = []
     for d in disponibles[:20]:
         faltan = []
@@ -832,8 +825,18 @@ async def alerta_disponibles_diaria():
         if faltan:
             lineas.append(f"• **{d['nombre']}** Cap {d['numero']} -> Faltan: `{', '.join(faltan)}`")
             
+    desc = "¡Hay capítulos pendientes que necesitan staff! Aquí están los roles vacíos:\n\n"
     if lineas:
-        embed.add_field(name="Capítulos esperando", value="\n".join(lineas), inline=False)
+        desc += "\n".join(lineas)
+    
+    embed = discord.Embed(
+        title="📢 TRABAJOS DISPONIBLES",
+        description=desc,
+        color=0x00FF00,
+        timestamp=ahora
+    )
+
+    if lineas:
         if len(disponibles) > 20:
             embed.set_footer(text=f"Mostrando 20 de {len(disponibles)} capítulos disponibles.")
         await canal.send(embed=embed)
@@ -2020,7 +2023,6 @@ async def test_disponibles(ctx):
     disponibles = db.trabajos_disponibles()
     if not disponibles:
         return await ctx.send("No hay trabajos disponibles.")
-    embed = discord.Embed(title="📢 TRABAJOS DISPONIBLES (TEST)", color=0x00FF00)
     lineas = []
     for d in disponibles[:20]:
         faltan = []
@@ -2031,8 +2033,14 @@ async def test_disponibles(ctx):
         if d['estado_proof'] == 0: faltan.append("Proof")
         if faltan:
             lineas.append(f"• **{d['nombre']}** Cap {d['numero']} -> Faltan: `{', '.join(faltan)}`")
+            
+    desc = "Lista de trabajos vacíos disponibles:\n\n"
     if lineas:
-        embed.add_field(name="Capítulos esperando", value="\n".join(lineas), inline=False)
+        desc += "\n".join(lineas)
+        
+    embed = discord.Embed(title="📢 TRABAJOS DISPONIBLES (TEST)", description=desc, color=0x00FF00)
+
+    if lineas:
         await ctx.send(embed=embed)
 
 @bot.command()
