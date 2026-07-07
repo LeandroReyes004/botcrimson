@@ -439,9 +439,39 @@ async def task_check_hiatus():
                     if role in member.roles:
                         try: await member.remove_roles(role)
                         except: pass
-            db._exec("UPDATE staff_discord SET hiatus_hasta = NULL WHERE discord_id = %s", (discord_id,))
+        db._exec("UPDATE staff_discord SET hiatus_hasta = NULL WHERE discord_id = %s", (discord_id,))
     except Exception as e:
         log.error(f"Error en task_check_hiatus: {e}")
+
+@tasks.loop(hours=24)
+async def task_check_miembros_activos():
+    try:
+        log.info("[AutoSync] Sincronizando usuarios de BD con los miembros del servidor...")
+        rows = db._exec("SELECT discord_id FROM staff_discord WHERE activo = 1", fetch="all")
+        if not rows: return
+        
+        miembros_ids = set()
+        for guild in bot.guilds:
+            for member in guild.members:
+                miembros_ids.add(str(member.id))
+                
+        desactivados = 0
+        for r in rows:
+            uid = str(r["discord_id"])
+            if uid not in miembros_ids:
+                db._exec("UPDATE staff_discord SET activo = 0 WHERE discord_id = %s", (uid,))
+                db._exec("""
+                    UPDATE usuarios u
+                    INNER JOIN staff_discord s ON u.usuario = s.usuario_form
+                    SET u.activo = 0
+                    WHERE s.discord_id = %s
+                """, (uid,))
+                desactivados += 1
+                
+        if desactivados > 0:
+            log.info(f"[AutoSync] Se desactivaron {desactivados} usuarios que ya no están en el servidor.")
+    except Exception as e:
+        log.error(f"Error en task_check_miembros_activos: {e}")
 
 @tasks.loop(hours=12)
 async def task_auto_sync_drive():
@@ -502,6 +532,8 @@ async def on_ready():
         watchdog_check.start()
     if not task_check_hiatus.is_running():
         task_check_hiatus.start()
+    if not task_check_miembros_activos.is_running():
+        task_check_miembros_activos.start()
     if not task_auto_sync_drive.is_running():
         task_auto_sync_drive.start()
 
@@ -1415,6 +1447,39 @@ async def urgentes(ctx):
             inline=False
         )
     await ctx.send(embed=embed)
+
+@bot.command()
+async def sync(ctx):
+    """
+    Sincroniza los usuarios de la BD con el servidor.
+    Desactiva a los que ya no estén en el servidor.
+    """
+    if not await verificar_permiso(ctx, 'admin'): return
+    
+    msg = await ctx.send("🔄 Sincronizando usuarios. Esto puede tardar unos segundos...")
+    try:
+        rows = db._exec("SELECT discord_id FROM staff_discord WHERE activo = 1", fetch="all")
+        if not rows:
+            return await msg.edit(content="No hay usuarios activos en la BD.")
+            
+        miembros_ids = {str(member.id) for member in ctx.guild.members}
+        desactivados = 0
+        
+        for r in rows:
+            uid = str(r["discord_id"])
+            if uid not in miembros_ids:
+                db._exec("UPDATE staff_discord SET activo = 0 WHERE discord_id = %s", (uid,))
+                db._exec("""
+                    UPDATE usuarios u
+                    INNER JOIN staff_discord s ON u.usuario = s.usuario_form
+                    SET u.activo = 0
+                    WHERE s.discord_id = %s
+                """, (uid,))
+                desactivados += 1
+                
+        await msg.edit(content=f"✅ Sincronización completada. Se desactivaron **{desactivados}** usuarios que ya no están en el servidor.")
+    except Exception as e:
+        await msg.edit(content=f"❌ Error al sincronizar: {e}")
 
 @bot.command()
 async def estado(ctx, *, args: str):
