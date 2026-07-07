@@ -4,6 +4,7 @@ import os
 import re
 import asyncio
 import logging
+import aiohttp
 import unicodedata
 import gspread
 from google.oauth2.service_account import Credentials
@@ -536,6 +537,12 @@ async def on_ready():
         task_check_miembros_activos.start()
     if not task_auto_sync_drive.is_running():
         task_auto_sync_drive.start()
+    if not alerta_disponibles_diaria.is_running():
+        alerta_disponibles_diaria.start()
+    if not resumen_semanal_domingo.is_running():
+        resumen_semanal_domingo.start()
+    if not auto_sync_drive_loop.is_running():
+        auto_sync_drive_loop.start()
 
     canal_db = db.config_get("canal_alertas", "0")
     if canal_db and canal_db != "0":
@@ -783,6 +790,149 @@ async def recordatorio_diario():
 async def recordatorio_error(error):
     log.error(f"[Recordatorio] Error: {error}")
 
+# --- ALERTA DIARIA TRABAJOS DISPONIBLES (9:00 AM) ────────────────────────────
+
+@tasks.loop(minutes=1)
+async def alerta_disponibles_diaria():
+    ahora = datetime.now()
+    if ahora.hour != 9 or ahora.minute != 0:
+        return
+    ultimo = db.config_get("ultimo_alerta_disp")
+    hoy = ahora.strftime("%Y-%m-%d")
+    if ultimo == hoy:
+        return
+    db.config_set("ultimo_alerta_disp", hoy)
+
+    canal_id = get_canal_alertas_id()
+    if not canal_id:
+        return
+    canal = bot.get_channel(canal_id)
+    if not canal:
+        return
+
+    disponibles = db.trabajos_disponibles()
+    if not disponibles:
+        return
+
+    embed = discord.Embed(
+        title="📢 TRABAJOS DISPONIBLES",
+        description="¡Hay capítulos pendientes que necesitan staff! Aquí están los roles vacíos:",
+        color=0x00FF00,
+        timestamp=ahora
+    )
+    
+    lineas = []
+    for d in disponibles[:20]:
+        faltan = []
+        if d['estado_raw'] == 0: faltan.append("RAW")
+        if d['estado_trad'] == 0: faltan.append("Trad")
+        if d['estado_clean'] == 0: faltan.append("Clean")
+        if d['estado_type'] == 0: faltan.append("Type")
+        if d['estado_proof'] == 0: faltan.append("Proof")
+        if faltan:
+            lineas.append(f"• **{d['nombre']}** Cap {d['numero']} -> Faltan: `{', '.join(faltan)}`")
+            
+    if lineas:
+        embed.add_field(name="Capítulos esperando", value="\n".join(lineas), inline=False)
+        if len(disponibles) > 20:
+            embed.set_footer(text=f"Mostrando 20 de {len(disponibles)} capítulos disponibles.")
+        await canal.send(embed=embed)
+
+@alerta_disponibles_diaria.error
+async def alerta_disp_error(error):
+    log.error(f"[Alerta Disponibles] Error: {error}")
+
+# --- RESUMEN SEMANAL (DOMINGOS 9:00 AM) ──────────────────────────────────────
+
+@tasks.loop(minutes=1)
+async def resumen_semanal_domingo():
+    ahora = datetime.now()
+    # 6 is Sunday in Python
+    if ahora.weekday() != 6 or ahora.hour != 9 or ahora.minute != 0:
+        return
+    ultimo = db.config_get("ultimo_resumen_semanal")
+    hoy = ahora.strftime("%Y-%m-%d")
+    if ultimo == hoy:
+        return
+    db.config_set("ultimo_resumen_semanal", hoy)
+
+    canal_id = get_canal_alertas_id()
+    if not canal_id:
+        return
+    canal = bot.get_channel(canal_id)
+    if not canal:
+        return
+
+    completadas = db.tareas_completadas_semana()
+    if not completadas:
+        return
+
+    embed = discord.Embed(
+        title="🏆 RESUMEN SEMANAL DE TAREAS",
+        description="¡Buen trabajo a todos! Estas son las tareas entregadas en los últimos 7 días:",
+        color=0xFFD700,
+        timestamp=ahora
+    )
+    
+    por_usuario = {}
+    for c in completadas:
+        user = c['nombre_display']
+        if user not in por_usuario:
+            por_usuario[user] = []
+        por_usuario[user].append(f"{c['obra']} Cap {c['cap']} ({c['rol']})")
+        
+    for user, tareas in list(por_usuario.items())[:15]:
+        embed.add_field(
+            name=f"👤 {user} ({len(tareas)} entregas)", 
+            value="\n".join(f"• {t}" for t in tareas[:5]) + ("\n• ..." if len(tareas)>5 else ""), 
+            inline=False
+        )
+        
+    embed.set_footer(text=f"Total de entregas esta semana: {len(completadas)}")
+    await canal.send(embed=embed)
+
+@resumen_semanal_domingo.error
+async def resumen_sem_error(error):
+    log.error(f"[Resumen Semanal] Error: {error}")
+
+# --- AUTO-SYNC DRIVE (Cada 12 horas) ─────────────────────────────────────────
+
+@tasks.loop(hours=12)
+async def auto_sync_drive_loop():
+    capitulos = db.capitulos_para_autosync()
+    if not capitulos:
+        return
+            
+    exitosos = 0
+    errores = 0
+    url_base = "https://scancrimson.vercel.app/api.php?action=verificarDriveCapitulo&sync=1"
+    
+    async with aiohttp.ClientSession() as session:
+        for cap in capitulos:
+            url = f"{url_base}&proyecto_id={cap['proyecto_id']}&capitulo_id={cap['id']}&capitulo_num={cap['numero']}"
+            try:
+                async with session.get(url, timeout=25) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get('exito'):
+                            exitosos += 1
+                        else:
+                            errores += 1
+                    else:
+                        errores += 1
+            except Exception as e:
+                errores += 1
+            await asyncio.sleep(2)
+            
+    canal_id = get_canal_alertas_id()
+    if canal_id:
+        canal = bot.get_channel(canal_id)
+        if canal:
+            await canal.send(f"🔄 **Auto-Sync Drive finalizado:** Se verificaron {len(capitulos)} capítulos silenciosamente en Drive. ({exitosos} actualizados, {errores} fallos).")
+
+@auto_sync_drive_loop.error
+async def auto_sync_error(error):
+    log.error(f"[Auto Sync Drive] Error: {error}")
 # --- COMANDOS DE ADMINISTRACIÓN ──────────────────────────────────────────────
 
 @bot.command()

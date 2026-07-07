@@ -503,3 +503,48 @@ def estadisticas_globales():
         }
     finally:
         conn.close()
+
+# ══════════════════════════════════════════════════════════════
+#  AUTOMATIZACIÓN / ALERTAS
+# ══════════════════════════════════════════════════════════════
+
+def capitulos_para_autosync():
+    """Obtiene capítulos no publicados de proyectos activos para sincronizar con Drive."""
+    return _exec(
+        "SELECT c.id, c.numero, p.id as proyecto_id "
+        "FROM capitulos c "
+        "JOIN proyectos p ON c.proyecto_id = p.id "
+        "WHERE p.estado = 'activo' AND p.carpeta_drive_id IS NOT NULL "
+        "AND c.estado != 'Terminado'", 
+        fetch="all"
+    )
+
+def trabajos_disponibles():
+    """Busca capítulos con roles vacíos (0) pero que ya tengan algo subido."""
+    # Como asumo las columnas de estado_* (según api.php), hago un JOIN si es necesario, 
+    # o directamente en capitulos si las columnas están ahí.
+    # Evito arrojar error de SQL devolviendo dict vacío si las columnas fallan.
+    try:
+        return _exec(
+            "SELECT c.numero, p.nombre, c.estado_raw, c.estado_trad, c.estado_clean, c.estado_type, c.estado_proof "
+            "FROM capitulos c "
+            "JOIN proyectos p ON c.proyecto_id = p.id "
+            "WHERE p.estado = 'activo' AND c.estado != 'Terminado' "
+            "AND (c.estado_raw=0 OR c.estado_trad=0 OR c.estado_clean=0 OR c.estado_type=0 OR c.estado_proof=0)",
+            fetch="all"
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error trabajos_disponibles: {e}")
+        return []
+
+def tareas_completadas_semana():
+    """Tareas entregadas en los últimos 7 días."""
+    return _exec(
+        "SELECT t.obra, t.cap, t.rol, s.nombre_display "
+        "FROM tareas t "
+        "JOIN staff_discord s ON t.discord_id = s.discord_id "
+        "WHERE t.estado = 'entregada' AND t.creado >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
+        "ORDER BY t.creado DESC",
+        fetch="all"
+    )
