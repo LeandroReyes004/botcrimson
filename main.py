@@ -2099,14 +2099,15 @@ async def test_resumen(ctx):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def test_sync(ctx):
-    await ctx.send("🔄 Forzando Auto-Sync Drive. Esto puede demorar unos minutos...")
     capitulos = db.capitulos_para_autosync()
     if not capitulos:
         return await ctx.send("No hay capítulos pendientes para sincronizar.")
+        
+    msg = await ctx.send(f"🔄 Forzando Auto-Sync de **{len(capitulos)}** capítulos. Esto puede demorar unos minutos...")
     exitosos, errores = 0, 0
     url_base = "https://scancrimson.vercel.app/api.php?action=verificarDriveCapitulo&sync=1"
     async with aiohttp.ClientSession() as session:
-        for cap in capitulos:
+        for i, cap in enumerate(capitulos):
             url = f"{url_base}&proyecto_id={cap['proyecto_id']}&capitulo_id={cap['id']}&capitulo_num={cap['numero']}"
             try:
                 async with session.get(url, timeout=25) as resp:
@@ -2116,8 +2117,15 @@ async def test_sync(ctx):
                         else: errores += 1
                     else: errores += 1
             except: errores += 1
+            
+            if (i + 1) % 5 == 0 or (i + 1) == len(capitulos):
+                try:
+                    await msg.edit(content=f"🔄 Auto-Sync en progreso: verificados **{i+1} de {len(capitulos)}**...")
+                except: pass
+                
             await asyncio.sleep(2)
-    await ctx.send(f"✅ Sync finalizado: {len(capitulos)} verificados. ({exitosos} actualizados, {errores} errores).")
+            
+    await msg.edit(content=f"✅ Sync finalizado: {len(capitulos)} verificados. ({exitosos} actualizados, {errores} errores).")
 
 # --- ARRANQUE ─────────────────────────────────────────────────────────────────
 TOKEN = os.getenv('DISCORD_TOKEN')
