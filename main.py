@@ -2045,6 +2045,42 @@ async def test_disponibles(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def test_recordatorio(ctx):
+    await ctx.send("Comprobando tareas pendientes activas...")
+    pendientes = db.tarea_get_todas_activas()
+    if not pendientes:
+        return await ctx.send("No hay tareas pendientes en este momento.")
+
+    embed = discord.Embed(
+        title="☀️ RESUMEN DIARIO DE TAREAS PENDIENTES (TEST)",
+        description=f"**{datetime.now().strftime('%d/%m/%Y')}** — Tareas activas en el sistema:",
+        color=0xDC2020,
+        timestamp=datetime.now()
+    )
+    urgentes_hoy = []
+    normales = []
+    for tarea in pendientes:
+        limite = tarea["limite"] if isinstance(tarea["limite"], datetime) \
+                 else datetime.fromisoformat(str(tarea["limite"]))
+        horas_restantes = (limite - datetime.now()).total_seconds() / 3600
+        entrada = (
+            f"• <@{tarea['discord_id']}> — **{tarea['obra']}** Cap {tarea['cap']} "
+            f"(`{tarea['rol']}`) — vence <t:{int(limite.timestamp())}:R>"
+        )
+        if horas_restantes <= 24:
+            urgentes_hoy.append(entrada)
+        else:
+            normales.append(entrada)
+
+    if urgentes_hoy:
+        embed.add_field(name="🔴 URGENTES (vencen hoy)", value="\n".join(urgentes_hoy[:10]), inline=False)
+    if normales:
+        embed.add_field(name="🟡 En curso", value="\n".join(normales[:15]), inline=False)
+    embed.set_footer(text=f"Total: {len(pendientes)} tarea(s) activa(s)")
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def test_resumen(ctx):
     await ctx.send("Generando resumen semanal...")
     completadas = db.tareas_completadas_semana()
