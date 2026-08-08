@@ -23,7 +23,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='cd!', intents=intents, help_command=None)
 COLOR_CRIMSON = 0x660000
-CANAL_LIDERES_ID = 1503832157729198203
+CANAL_LIDERES_ID = int(os.getenv("CANAL_LIDERES_ID", "1503832157729198203"))
 
 @bot.event
 async def on_ready():
@@ -117,9 +117,18 @@ async def ranking(ctx):
 # --- ALERTA DIARIA A LIDERES ---
 @tasks.loop(hours=24)
 async def alerta_lideres():
-    canal = bot.get_channel(CANAL_LIDERES_ID)
+    # Obtener el canal desde la base de datos (configuración web)
+    filas_config = db._exec("SELECT valor FROM config_bot WHERE clave = 'discord_canal_reportes'", fetch="one")
+    canal_id_db = filas_config['valor'] if filas_config and filas_config.get('valor') else None
+    
+    if canal_id_db and str(canal_id_db).isdigit():
+        target_canal_id = int(canal_id_db)
+    else:
+        target_canal_id = int(os.getenv("CANAL_LIDERES_ID", "1503832157729198203"))
+        
+    canal = bot.get_channel(target_canal_id)
     if not canal: 
-        log.warning(f"No se pudo encontrar el canal de líderes con ID {CANAL_LIDERES_ID}")
+        log.warning(f"No se pudo encontrar el canal de líderes con ID {target_canal_id}")
         return
     
     filas = db._exec("SELECT id, discord_id, obra, cap, rol, limite FROM tareas WHERE estado='activa' ORDER BY limite ASC", fetch="all")
