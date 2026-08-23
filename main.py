@@ -30,6 +30,8 @@ async def on_ready():
     log.info(f"✅ Conectado como {bot.user} en modo Solo Consulta.")
     if not alerta_lideres.is_running():
         alerta_lideres.start()
+    if not auto_sincronizar.is_running():
+        auto_sincronizar.start()
 
 @bot.event
 async def on_member_remove(member):
@@ -194,6 +196,36 @@ async def alerta_lideres():
 @alerta_lideres.before_loop
 async def before_alerta_lideres():
     await bot.wait_until_ready()
+
+# --- AUTO SYNC ---
+@tasks.loop(hours=24)
+async def auto_sincronizar():
+    await bot.wait_until_ready()
+    
+    if not bot.guilds:
+        log.error("[Auto-Sync] Error: El bot no está en ningún servidor.")
+        return
+        
+    guild = bot.guilds[0] # Toma el primer servidor donde está el bot automáticamente
+    log.info("🔄 Iniciando sincronización automática diaria de staff...")
+    
+    miembros_servidor = [str(member.id) for member in guild.members]
+    staff_bd = db.obtener_ids_staff_activo() 
+    desactivados = 0
+    
+    for discord_id in staff_bd:
+        if discord_id not in miembros_servidor:
+            db.desactivar_staff(discord_id)
+            desactivados += 1
+            
+    if desactivados > 0:
+        log.info(f"✅ Auto-Sync completado: Se desactivaron {desactivados} miembros.")
+        
+        # Avisar en el canal de líderes si es posible
+        target_canal_id = int(os.getenv("CANAL_LIDERES_ID", "1503832157729198203"))
+        canal = bot.get_channel(target_canal_id)
+        if canal:
+            await canal.send(f"🔄 **Limpieza Automática:** Se detectaron y desactivaron **{desactivados}** usuarios que ya no están en el servidor.")
 
 # --- ARRANQUE ---
 if __name__ == "__main__":
