@@ -132,6 +132,14 @@ def staff_listar():
 def staff_toggle(discord_id: int, activo: int):
     _exec("UPDATE staff_discord SET activo=%s WHERE discord_id=%s", (activo, discord_id))
 
+def desactivar_staff(discord_id):
+    _exec("UPDATE staff_discord SET activo=0 WHERE discord_id=%s", (discord_id,))
+
+def obtener_ids_staff_activo() -> list:
+    """Devuelve una lista con los IDs de Discord de todo el staff activo en la BD"""
+    filas = _exec("SELECT discord_id FROM staff_discord WHERE activo = 1", fetch="all")
+    return [str(f['discord_id']) for f in filas] if filas else []
+
 def usuario_panel_crear(usuario: str, password: str, rol: str = 'staff'):
     """Crea o actualiza la cuenta del panel web.
     Guarda la contraseña en texto plano — PHP la hashea con bcrypt en el primer login."""

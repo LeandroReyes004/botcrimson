@@ -31,6 +31,28 @@ async def on_ready():
     if not alerta_lideres.is_running():
         alerta_lideres.start()
 
+@bot.event
+async def on_member_remove(member):
+    db.desactivar_staff(member.id)
+    log.info(f"👤 Miembro salió: {member.display_name} ({member.id}). Desactivado en la BD.")
+
+@bot.command(name="sincronizar_staff")
+@commands.has_permissions(administrator=True)
+async def sincronizar_staff(ctx):
+    await ctx.send("🔄 Iniciando sincronización de staff con la base de datos...")
+    
+    miembros_servidor = [str(member.id) for member in ctx.guild.members]
+    staff_bd = db.obtener_ids_staff_activo() 
+    
+    desactivados = 0
+    
+    for discord_id in staff_bd:
+        if discord_id not in miembros_servidor:
+            db.desactivar_staff(discord_id)
+            desactivados += 1
+            
+    await ctx.send(f"✅ Sincronización completada. Se marcaron **{desactivados}** usuarios como inactivos en la web.")
+
 # --- COMANDOS DE CONSULTA ---
 
 @bot.command(name="help")
