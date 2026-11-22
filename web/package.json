@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "db:local": "wrangler d1 migrations apply crimson-db --local",
-    "db:remote": "wrangler d1 migrations apply crimson-db --remote",
+    "db:local": "wrangler d1 migrations apply crimson-panel-db --local",
+    "db:remote": "wrangler d1 migrations apply crimson-panel-db --remote",
     "deploy": "wrangler deploy"
   },
   "devDependencies": { "wrangler": "^4.0.0" }

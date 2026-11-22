@@ -9,8 +9,8 @@ run_worker_first = ["/api/*"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "crimson-db"
-database_id = "REEMPLAZAR_CON_ID_DE_D1"
+database_name = "crimson-panel-db"
+database_id = "d61aa134-b79a-4612-94f6-830fa1e171f2"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
@@ -25,7 +25,7 @@ crons = ["0 * * * *"]
 ZONA_HORARIA = "America/Santo_Domingo"
 
 # Dominio propio (descomentar al desplegar)
-# routes = [{ pattern = "panel.scancrimson.com", custom_domain = true }]
+routes = [{ pattern = "panel.scancrimson.com", custom_domain = true }]
 
 # Secretos (npx wrangler secret put NOMBRE):
 #   BOT_API_KEY          clave que usa el bot de Discord para hablar con la API

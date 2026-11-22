@@ -24,7 +24,7 @@ main.py, api_client.py   Bot de Discord (Python). Solo habla con la API del pane
 cd web
 npm install
 npx wrangler login
-npx wrangler d1 create crimson-db            # copia el database_id a wrangler.toml
+npx wrangler d1 create crimson-panel-db            # copia el database_id a wrangler.toml
 npx wrangler r2 bucket create crimson-archivos
 npm run db:remote                            # crea las tablas
 npx wrangler secret put BOT_API_KEY          # inventa una clave larga; el bot usa la misma
@@ -41,7 +41,7 @@ y entra enseguida para crear el administrador (la primera pantalla lo pide).
 ```bash
 pip install PyMySQL
 DB_HOST=... DB_USER=... DB_PASS=... DB_NAME=crimson_scan python web/scripts/migrar_desde_mysql.py > migracion.sql
-npx wrangler d1 execute crimson-db --remote --file=migracion.sql
+npx wrangler d1 execute crimson-panel-db --remote --file=migracion.sql
 ```
 
 Hazlo antes de crear el administrador si quieres conservar tu usuario viejo. Las contraseñas viejas no se migran: cada uno usa `cd!acceso`.
