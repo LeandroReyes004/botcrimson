@@ -99,3 +99,12 @@ table.permisos input[type="checkbox"] { width: 18px; height: 18px; accent-color:
 .boton-discord { display: block; text-align: center; background: #5865f2; color: #fff; text-decoration: none; font-weight: 600; border-radius: 8px; padding: 10px 12px; margin-bottom: 6px; }
 .boton-discord:hover { filter: brightness(1.1); }
 .centro-txt { text-align: center; margin: 8px 0 10px; }
+/* ---------- Archivos ---------- */
+dialog.grande { max-width: 760px; }
+.subida { background: var(--panel2); border: 1px dashed var(--line); border-radius: var(--radius); padding: 12px; margin-bottom: 8px; }
+.lista-arch { display: flex; flex-direction: column; gap: 4px; max-height: 30vh; overflow: auto; }
+.arch { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.arch a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.raw { background: #3b82f622; border-color: #3b82f6; color: #7fb0ff; font-size: 11px; padding: 1px 6px; vertical-align: middle; }
+.boton-archivo { display: inline-block; cursor: pointer; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.boton-archivo:hover { border-color: var(--crimson); }

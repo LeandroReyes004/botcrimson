@@ -3,6 +3,7 @@ import { fallo, json, iguales, discordId, entero, ROLES, tokenAleatorio, ahoraIS
 import { perfil, tareasDe, ranking, mercado, tomarTarea, entregarTarea, solicitar, filtrarMercado, filtrarRanking } from "./tareas.js";
 import { leerPermisos, permisosDe } from "./permisos.js";
 import { liberarTareasDe } from "./admin.js";
+import { subir } from "./archivos.js";
 
 async function staffPorDiscord(env, id) {
   const s = await env.DB.prepare("SELECT * FROM staff WHERE discord_id = ?").bind(discordId(id)).first();
@@ -15,6 +16,13 @@ export async function rutasBot(req, env, ruta, url) {
   if (!env.BOT_API_KEY || !iguales(clave, env.BOT_API_KEY)) fallo("Clave del bot inválida", 401);
   const m = req.method;
   const q = (k) => url.searchParams.get(k);
+  // Subir un archivo adjunto en Discord a la tarea (antes de cd!entregar). El cuerpo es el archivo.
+  if (ruta === "subir" && m === "PUT") {
+    const s = await staffPorDiscord(env, q("discord_id"));
+    const t = await env.DB.prepare("SELECT * FROM tareas WHERE id = ? AND staff_id = ? AND estado = 'activa'").bind(entero(q("tarea_id"), "tarea_id", 1, 1e9), s.id).first();
+    if (!t) fallo("No tienes una tarea activa con ese número", 404);
+    return json(await subir(req, env, s, permisosDe(s, leerPermisos(await config(env))), t.capitulo_id, t.rol, q("nombre")));
+  }
   const body = m === "POST" ? await req.json().catch(() => ({})) : {};
 
   // Permisos de quien escribe el comando (pide = ID de Discord del autor)

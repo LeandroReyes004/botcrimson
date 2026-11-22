@@ -178,7 +178,7 @@ const VISTAS = {
       ${Object.keys(porObra).length ? Object.entries(porObra).map(([obra, lista]) => `
         <div class="obra-titulo"><h3>${esc(obra)}</h3><span class="muted">${lista.length} cap.</span></div>
         <div class="caps-grid">${lista.map((c) => `<div class="cap-card ${c.estado} ${cambiados.has(c.id) ? "cambio" : ""}">
-          <div class="cap-head"><b>Cap. ${esc(c.numero)}</b><span class="chip ${c.estado === "listo" ? "listo" : c.estado === "en_proceso" ? "activa" : "libre"}">${ESTADO_CAP[c.estado]}</span></div>
+          <div class="cap-head"><b>Cap. ${esc(c.numero)}${c.raws ? ' <span class="chip raw" title="RAW subida al panel">RAW</span>' : ""}</b><span class="chip ${c.estado === "listo" ? "listo" : c.estado === "en_proceso" ? "activa" : "libre"}">${ESTADO_CAP[c.estado]}</span></div>
           ${ROLES.map((r) => filaRol(c, r)).join("")}</div>`).join("")}</div>`).join("")
       : `<p class="muted">${caps.length ? "No hay capítulos con este filtro." : "No hay capítulos pendientes en proyectos activos."}</p>`}</div>`;
 
@@ -204,6 +204,7 @@ const VISTAS = {
     main.querySelectorAll("[data-entregar]").forEach((b) => (b.onclick = () => {
       if (confirm("¿Confirmas que entregaste esta tarea?")) accion(() => post(`tareas/${b.dataset.entregar}/entregar`), "¡Entregada! +puntos");
     }));
+    main.querySelectorAll("[data-archivos]").forEach((b) => (b.onclick = () => dialogoArchivos(Number(b.dataset.archivos), b.dataset.titulo, b.dataset.rol)));
     main.querySelectorAll("[data-ext]").forEach((b) => (b.onclick = () => dialogo("Pedir más tiempo", `
       <label>Días extra <input name="dias" type="number" min="1" max="14" value="2" required></label>
       <label>Motivo <input name="motivo" maxlength="300" placeholder="Opcional"></label>`,
@@ -392,7 +393,8 @@ const VISTAS = {
     const c = (await api("yo")).config;
     const campos = [["dias_limite", "Días para entregar una tarea"], ["max_tareas_activas", "Máximo de tareas activas por persona"],
       ["puntos_entrega", "Puntos por entrega"], ["puntos_vencida", "Puntos por tarea vencida (negativo)"], ["horas_gracia", "Horas de gracia antes de vencer"],
-      ["cuota_mensual", "Cuota mensual de entregas"], ["hora_reporte", "Hora del reporte diario a líderes (0-23)"]];
+      ["cuota_mensual", "Cuota mensual de entregas"], ["hora_reporte", "Hora del reporte diario a líderes (0-23)"],
+      ["exigir_archivos", "Para entregar hay que subir archivos (1 = sí, 0 = no)"]];
     main.innerHTML = `<div class="card"><h2>Ajustes del sistema</h2><form id="cfg">
       ${campos.map(([k, n]) => `<div class="fila" style="margin-bottom:8px"><label style="flex:2">${n}</label><input name="${k}" type="number" value="${esc(c[k])}" style="flex:1"></div>`).join("")}
       <button>Guardar</button></form></div>
@@ -411,19 +413,24 @@ const VISTAS = {
 
 async function capitulos(el, p) {
   if (!p) return;
-  const [caps, gente] = await Promise.all([api(`admin/proyectos/${p.id}/capitulos`), api("admin/staff")]);
+  const [caps, gente] = await Promise.all([api(`admin/proyectos/${p.id}/capitulos`), P("ver_staff|asignar_tareas") ? api("admin/staff") : []]);
   const activos = gente.filter((g) => g.activo);
   el.innerHTML = `<div class="card"><h2>${esc(p.nombre)}: capítulos</h2>
     <form id="nc" class="fila" data-perm="gestionar_proyectos"><input name="capitulos" placeholder="Ej: 1-20, 21.5, 25" required><button>Añadir capítulos</button></form>
-    <div class="tabla" style="margin-top:12px"><table><tr><th>Cap.</th><th>Estado</th>${ROLES.map((r) => `<th>${ROL[r]}</th>`).join("")}<th></th></tr>
+    <div class="fila" style="margin-top:10px" data-perm="subir_raws"><button id="subirRaws">⏫ Subir RAWs de varios capítulos</button>
+      <span class="muted">Elige una carpeta con una subcarpeta por capítulo, o varios .zip (Cap01.zip, Cap02.zip…).</span></div>
+    <div class="tabla" style="margin-top:12px"><table><tr><th>Cap.</th><th>Estado</th><th>Archivos</th>${ROLES.map((r) => `<th>${ROL[r]}</th>`).join("")}<th></th></tr>
     ${caps.map((c) => `<tr><td><b>${esc(c.numero)}</b></td>
       <td><select data-cap="${c.id}" data-perm="gestionar_proyectos">${Object.entries(ESTADO_CAP).map(([k, n]) => `<option value="${k}" ${c.estado === k ? "selected" : ""}>${n}</option>`).join("")}</select></td>
+      <td><button class="sec mini" data-verarch="${c.id}" data-num="${esc(c.numero)}">${c.archivos.raw ? `RAW ${c.archivos.raw}` : "Sin RAW"}${ROLES.filter((r) => c.archivos[r]).length ? ` · ${ROLES.filter((r) => c.archivos[r]).map((r) => r).join(", ")}` : ""}</button></td>
       ${ROLES.map((r) => { const x = c.roles[r]; return `<td>${x ? `<span class="chip ${x.estado}">${esc(x.nombre)}</span>` : `<button class="sec mini" data-perm="asignar_tareas" data-asig="${c.id}" data-rol="${r}">Asignar</button>`}</td>`; }).join("")}
       <td><button class="sec mini" data-borrar="${c.id}" data-perm="gestionar_proyectos">Borrar</button></td></tr>`).join("")}</table></div></div>`;
   if ($("#nc")) $("#nc").onsubmit = (e) => {
     e.preventDefault();
     accion(async () => { const r = await post(`admin/proyectos/${p.id}/capitulos`, Object.fromEntries(new FormData(e.target))); toast(`Creados ${r.creados}${r.repetidos ? `, ${r.repetidos} ya existían` : ""}`, "bien"); });
   };
+  el.querySelectorAll("[data-verarch]").forEach((b) => (b.onclick = () => dialogoArchivos(Number(b.dataset.verarch), `${p.nombre} · cap. ${b.dataset.num}`, P("subir_raws") ? "raw" : null)));
+  if ($("#subirRaws")) $("#subirRaws").onclick = () => subirRawsVarios(p, caps);
   el.querySelectorAll("[data-cap]").forEach((s) => (s.onchange = () => accion(() => post(`admin/capitulos/${s.dataset.cap}`, { estado: s.value }, "PATCH"), "Estado cambiado")));
   el.querySelectorAll("[data-borrar]").forEach((b) => (b.onclick = () => { if (confirm("¿Borrar este capítulo?")) accion(() => api(`admin/capitulos/${b.dataset.borrar}`, { method: "DELETE" }), "Capítulo borrado"); }));
   el.querySelectorAll("[data-asig]").forEach((b) => (b.onclick = () => {
@@ -450,7 +457,7 @@ function tarjetaTarea(t, modo) {
     <div class="rol-fila"><span class="muted">Vence</span><span>${fecha(t.limite)}</span></div>
     <div class="rol-fila"><span class="muted">Tiempo</span>${chipEstadoTarea(t)}</div>
     ${t.solicitud ? `<div class="rol-fila"><span class="muted">Solicitud</span><span class="chip activa">${t.solicitud === "extension" ? `+${t.solicitud_dias} días` : "Cancelar"}: esperando a un líder</span></div>` : ""}
-    <div class="fila" style="margin-top:10px">${modo === "propia" ? `<button class="ok mini" data-entregar="${t.id}">Entregar</button>` + (t.solicitud ? "" : `
+    <div class="fila" style="margin-top:10px">${modo === "propia" ? `<button class="mini sec" data-archivos="${t.capitulo_id}" data-rol="${t.rol}" data-titulo="${esc(t.obra)} · cap. ${esc(t.cap)}">Archivos</button><button class="ok mini" data-entregar="${t.id}">Entregar</button>` + (t.solicitud ? "" : `
       <button class="sec mini" data-ext="${t.id}">Pedir más tiempo</button>
       <button class="sec mini" data-cancel="${t.id}">Pedir cancelar</button>`) : modo === "lider" ? `<button class="sec mini" data-quitar="${t.id}" data-perm="asignar_tareas">Quitar tarea</button>` : ""}</div>
   </div>`;
@@ -530,3 +537,173 @@ function dialogo(titulo, html, enviar, okMsg) {
 }
 
 iniciar();
+
+// ---------- Archivos (RAWs y entregas) ----------
+const ETAPA = { raw: "RAW", trad: "Traducción", clean: "Limpieza", type: "Typeo" };
+const FORMATOS = {
+  raw: ["jpg", "jpeg", "png", "webp", "gif", "zip", "rar", "7z"],
+  trad: ["docx", "doc", "odt", "txt", "pdf", "zip"],
+  clean: ["jpg", "jpeg", "png", "webp", "gif", "zip", "rar", "7z", "psd"],
+  type: ["jpg", "jpeg", "png", "webp", "gif", "zip", "rar", "7z", "psd"],
+};
+const ext = (n) => n.split(".").pop().toLowerCase();
+const tam = (b) => b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
+const natural = (a, b) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" });
+
+// Sube archivos de 4 en 4. alProgreso(hechos, total)
+async function subirLote(trabajos, alProgreso) {
+  let hechos = 0; const errores = [];
+  const cola = [...trabajos];
+  async function obrero() {
+    while (cola.length) {
+      const { capId, etapa, file, nombre } = cola.shift();
+      try {
+        const r = await fetch(`/api/capitulos/${capId}/archivos/${etapa}?nombre=${encodeURIComponent(nombre || file.name)}`,
+          { method: "PUT", body: file, credentials: "same-origin", headers: { "content-type": file.type || "application/octet-stream" } });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Error ${r.status}`);
+      } catch (e) { errores.push(`${nombre || file.name}: ${e.message}`); }
+      alProgreso(++hechos, trabajos.length);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, trabajos.length) }, obrero));
+  return errores;
+}
+
+function cargarJSZip() {
+  if (window.JSZip) return Promise.resolve(window.JSZip);
+  return new Promise((ok, mal) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+    s.onload = () => ok(window.JSZip); s.onerror = () => mal(new Error("No se pudo cargar el compresor"));
+    document.head.append(s);
+  });
+}
+async function descargarTodo(lista, nombreZip, btn) {
+  if (lista.length === 1) { location.href = `/api/archivos/${lista[0].id}`; return; }
+  const JSZip = await cargarJSZip(); const zip = new JSZip(); let n = 0;
+  for (const a of lista) {
+    btn.textContent = `Bajando ${++n}/${lista.length}…`;
+    const r = await fetch(`/api/archivos/${a.id}`, { credentials: "same-origin" });
+    if (!r.ok) throw new Error(`No se pudo bajar ${a.nombre}`);
+    zip.file(a.nombre, await r.blob());
+  }
+  btn.textContent = "Comprimiendo…";
+  const blob = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(blob);
+  Object.assign(document.createElement("a"), { href: url, download: `${nombreZip}.zip` }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// Ventana con los archivos del capítulo. etapaSubir = la etapa que esta persona puede subir (o null)
+async function dialogoArchivos(capId, titulo, etapaSubir) {
+  const d = document.createElement("dialog");
+  d.className = "grande";
+  document.body.append(d);
+  d.onclose = () => { d.remove(); render(); };
+  async function pintar() {
+    let arch;
+    try { arch = await api(`capitulos/${capId}/archivos`); } catch (e) { toast(e.message, "error"); d.close(); return; }
+    d.innerHTML = `<div class="fila" style="justify-content:space-between"><h2>${esc(titulo)}</h2><button class="sec mini" id="cerrar">Cerrar</button></div>
+      ${etapaSubir ? `<div class="subida"><b>Subir ${ETAPA[etapaSubir]}</b>
+        <p class="muted">Formatos: ${FORMATOS[etapaSubir].join(", ")}. Puedes elegir varios a la vez. Si subes uno con el mismo nombre, se reemplaza.</p>
+        <label class="boton-archivo">⏫ Elegir archivos<input type="file" id="archivos" multiple hidden accept="${FORMATOS[etapaSubir].map((e) => "." + e).join(",")}"></label>
+        <div id="progreso" class="muted"></div></div>` : ""}
+      ${Object.entries(arch).map(([et, lista]) => `<h3>${ETAPA[et]} (${lista.length})${lista.length ? ` <button class="sec mini" data-todo="${et}">Descargar todo</button>` : ""}</h3>
+        ${lista.length ? `<div class="lista-arch">${lista.map((a) => `<div class="arch"><a href="/api/archivos/${a.id}">${esc(a.nombre)}</a>
+          <span class="muted">${tam(a.bytes)} · ${esc(a.subio || "")}</span>${et === etapaSubir ? `<button class="sec mini" data-borra="${a.id}">✕</button>` : ""}</div>`).join("")}</div>`
+        : '<p class="muted">Nada todavía.</p>'}`).join("")}`;
+    $("#cerrar", d).onclick = () => d.close();
+    d.querySelectorAll("[data-todo]").forEach((b) => (b.onclick = () => descargarTodo(arch[b.dataset.todo], `${titulo} - ${ETAPA[b.dataset.todo]}`, b)
+      .catch((e) => toast(e.message, "error")).finally(() => (b.textContent = "Descargar todo"))));
+    d.querySelectorAll("[data-borra]").forEach((b) => (b.onclick = async () => {
+      if (!confirm("¿Borrar este archivo?")) return;
+      try { await api(`archivos/${b.dataset.borra}`, { method: "DELETE" }); pintar(); } catch (e) { toast(e.message, "error"); }
+    }));
+    const inp = $("#archivos", d);
+    if (inp) inp.onchange = async () => {
+      const files = [...inp.files];
+      const malos = files.filter((f) => !FORMATOS[etapaSubir].includes(ext(f.name)));
+      if (malos.length) return toast(`No se aceptan: ${malos.map((f) => f.name).join(", ")}`, "error");
+      inp.disabled = true;
+      const errores = await subirLote(files.map((file) => ({ capId, etapa: etapaSubir, file })),
+        (h, t) => ($("#progreso", d).textContent = `Subiendo ${h} de ${t}…`));
+      if (errores.length) toast(`${errores.length} con error: ${errores[0]}`, "error"); else toast(`${files.length} archivo(s) subido(s)`, "bien");
+      pintar();
+    };
+  }
+  d.showModal();
+  d.innerHTML = '<p class="muted">Cargando…</p>';
+  pintar();
+}
+
+// Saca el número de capítulo de un nombre: "Cap 12", "Capitulo_012", "Chapter 12.5", "012"
+function numeroCapitulo(nombre, esArchivo) {
+  const base = esArchivo ? nombre.replace(/\.[a-z0-9]{1,4}$/i, "") : nombre;
+  const m = base.match(/(?:cap(?:[ií]tulo)?|ch(?:apter)?|ep(?:isodio)?)[\s._#-]*(\d{1,4}(?:[.,]\d{1,2})?)/i) || base.match(/(\d{1,4}(?:[.,]\d{1,2})?)(?!.*\d)/);
+  return m ? String(Number(m[1].replace(",", "."))) : null;
+}
+
+// Subir RAWs de varios capítulos de una vez: una carpeta con subcarpetas por capítulo, o varios .zip
+function subirRawsVarios(p, caps) {
+  const d = document.createElement("dialog");
+  d.className = "grande";
+  d.innerHTML = `<h2>Subir RAWs: ${esc(p.nombre)}</h2>
+    <p class="muted">Opción 1: una carpeta que tenga una subcarpeta por capítulo (por ejemplo <code>Cap 12</code>, <code>Cap 13</code>) con las imágenes dentro.<br>
+    Opción 2: varios archivos .zip o .rar, uno por capítulo (por ejemplo <code>Cap12.zip</code>).<br>El número del capítulo se saca del nombre. Si el capítulo no existe, se crea.</p>
+    <div class="fila"><label class="boton-archivo">📁 Elegir carpeta<input type="file" id="carpeta" webkitdirectory multiple hidden></label>
+    <label class="boton-archivo">🗜️ Elegir .zip / .rar<input type="file" id="zips" multiple accept=".zip,.rar,.7z" hidden></label></div>
+    <div id="vista"></div>
+    <div class="fila" style="margin-top:12px"><button id="ir" disabled>Subir</button><button class="sec" id="cerrar">Cerrar</button></div>`;
+  document.body.append(d);
+  d.onclose = () => { d.remove(); render(); };
+  $("#cerrar", d).onclick = () => d.close();
+  const existentes = new Map(caps.map((c) => [c.numero, c]));
+  let grupos = new Map();
+
+  function preparar(files, desdeCarpeta) {
+    grupos = new Map(); const ignorados = [];
+    for (const f of files) {
+      if (!FORMATOS.raw.includes(ext(f.name))) { if (!f.name.startsWith(".") && !/thumbs\.db$/i.test(f.name)) ignorados.push(f.name); continue; }
+      const partes = (f.webkitRelativePath || f.name).split("/");
+      // En carpeta: el número sale de la subcarpeta del capítulo; si no hay subcarpeta, del nombre del archivo
+      const fuente = desdeCarpeta && partes.length >= 3 ? partes[partes.length - 2] : f.name;
+      const num = numeroCapitulo(fuente, fuente === f.name);
+      if (!num) { ignorados.push(f.name); continue; }
+      if (!grupos.has(num)) grupos.set(num, []);
+      grupos.get(num).push(f);
+    }
+    const orden = [...grupos.keys()].sort((a, b) => Number(a) - Number(b));
+    const total = [...grupos.values()].reduce((s, l) => s + l.length, 0);
+    $("#vista", d).innerHTML = orden.length ? `<p><b>${orden.length} capítulos</b>, ${total} archivos.${ignorados.length ? ` Se ignoran ${ignorados.length} (no son imágenes/zip o sin número).` : ""}</p>
+      <div class="tabla" style="max-height:40vh;overflow:auto"><table><tr><th>Cap.</th><th>Archivos</th><th>Tamaño</th><th></th></tr>
+      ${orden.map((n) => { const l = grupos.get(n), c = existentes.get(n);
+        return `<tr><td><b>${esc(n)}</b></td><td>${l.length}</td><td>${tam(l.reduce((s, f) => s + f.size, 0))}</td>
+        <td>${c ? (c.archivos.raw ? `<span class="chip activa">Ya tiene ${c.archivos.raw} RAW: se añaden</span>` : '<span class="chip">Existe</span>') : '<span class="chip libre">Nuevo</span>'}</td></tr>`; }).join("")}</table></div>
+      <div id="prog" class="muted" style="margin-top:8px"></div>`
+      : `<p class="muted">No encontré capítulos. ${ignorados.length ? `Archivos ignorados: ${ignorados.slice(0, 5).map(esc).join(", ")}…` : ""}</p>`;
+    $("#ir", d).disabled = !orden.length;
+  }
+  $("#carpeta", d).onchange = (e) => preparar([...e.target.files], true);
+  $("#zips", d).onchange = (e) => preparar([...e.target.files], false);
+
+  $("#ir", d).onclick = async () => {
+    const boton = $("#ir", d); boton.disabled = true;
+    try {
+      const nuevos = [...grupos.keys()].filter((n) => !existentes.has(n));
+      if (nuevos.length) await post(`admin/proyectos/${p.id}/capitulos`, { capitulos: nuevos.join(", ") });
+      const ahora = await api(`admin/proyectos/${p.id}/capitulos`);
+      const ids = new Map(ahora.map((c) => [c.numero, c.id]));
+      const trabajos = [];
+      for (const [n, files] of grupos) {
+        const capId = ids.get(n);
+        if (!capId) continue;
+        for (const file of files.sort((a, b) => natural(a.name, b.name))) trabajos.push({ capId, etapa: "raw", file });
+      }
+      const errores = await subirLote(trabajos, (h, t) => ($("#prog", d).textContent = `Subiendo ${h} de ${t}…`));
+      $("#prog", d).innerHTML = errores.length ? `<span style="color:var(--bad)">${errores.length} archivos con error:</span><br>${errores.slice(0, 10).map(esc).join("<br>")}`
+        : `✅ Listo: ${trabajos.length} archivos en ${grupos.size} capítulos${nuevos.length ? ` (${nuevos.length} capítulos nuevos)` : ""}.`;
+      toast(errores.length ? "Terminó con errores" : "RAWs subidas", errores.length ? "error" : "bien");
+    } catch (e) { toast(e.message, "error"); boton.disabled = false; }
+  };
+  d.showModal();
+}

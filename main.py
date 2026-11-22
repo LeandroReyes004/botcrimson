@@ -82,7 +82,7 @@ async def ayuda(ctx):
     e.add_field(name="`cd!tareas @usuario`", value="Las tareas activas de otra persona.", inline=False)
     e.add_field(name="`cd!mercado`", value="Capítulos con roles libres que puedes tomar.", inline=False)
     e.add_field(name="`cd!tomar <id_capítulo> <rol>`", value="Tomar una tarea. Roles: trad, clean, type.", inline=False)
-    e.add_field(name="`cd!entregar <id_tarea>`", value="Marcar tu tarea como entregada (suma puntos).", inline=False)
+    e.add_field(name="`cd!entregar <id_tarea>`", value="Entregar tu tarea. Adjunta tus archivos en el mismo mensaje (o súbelos antes en el panel).", inline=False)
     e.add_field(name="`cd!extension <id_tarea> <días> [motivo]`", value="Pedir más tiempo a los líderes.", inline=False)
     e.add_field(name="`cd!mi_perfil`", value="Tus puntos y cuota del mes.", inline=False)
     e.add_field(name="`cd!ranking`", value="Top del mes.", inline=False)
@@ -147,6 +147,13 @@ async def tomar(ctx, capitulo_id: int, rol: str):
 
 @bot.command(name="entregar")
 async def entregar(ctx, tarea_id: int):
+    # Si el mensaje trae archivos adjuntos, se suben como el trabajo de la tarea antes de entregar
+    adjuntos = ctx.message.attachments
+    if adjuntos:
+        aviso = await ctx.send(f"⏫ Subiendo {len(adjuntos)} archivo(s)…")
+        for a in adjuntos:
+            await api.subir(ctx.author.id, tarea_id, a.filename, await a.read())
+        await aviso.edit(content=f"⏫ Subidos {len(adjuntos)} archivo(s).")
     t = await api.entregar(ctx.author.id, tarea_id)
     await ctx.send(f"✅ ¡Entregada! {t['obra']} cap. {t['cap']} ({t['rol_nombre']}).")
 

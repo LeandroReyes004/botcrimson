@@ -12,6 +12,7 @@ export const PERMISOS = [
   ["ver_resumen", "Ver el resumen", "Gestión", true, false],
   ["revisar_solicitudes", "Aprobar o rechazar extensiones y cancelaciones", "Gestión", true, false],
   ["asignar_tareas", "Asignar y quitar tareas a otros", "Gestión", true, false],
+  ["subir_raws", "Subir RAWs y reemplazar archivos de cualquier capítulo", "Gestión", true, false],
   ["gestionar_proyectos", "Crear proyectos, capítulos y marcar publicados", "Gestión", true, false],
   ["ver_staff", "Ver la lista del staff y la ficha de cada persona", "Staff", true, false],
   ["editar_staff", "Añadir y editar miembros (roles, hiatus, activar)", "Staff", true, false],

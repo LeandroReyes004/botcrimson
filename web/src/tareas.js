@@ -1,4 +1,5 @@
 // Lógica del mercado de tareas (la usan la web y el bot)
+import { exigirArchivos } from "./archivos.js";
 import {
   fallo, ROLES, ROL_NOMBRE, ahoraISO, sumarDias, textoRestante, config, registrar, avisar, mencion, inicioMesISO,
 } from "./util.js";
@@ -25,7 +26,8 @@ export const enHiatus = (staff) => staff.hiatus_hasta && new Date(staff.hiatus_h
 // Mercado: capítulos de proyectos activos que no están publicados, con quién tiene cada rol
 export async function mercado(env, staff) {
   const { results: caps } = await env.DB.prepare(`
-    SELECT c.id, c.numero, c.estado, p.id AS proyecto_id, p.nombre AS obra
+    SELECT c.id, c.numero, c.estado, p.id AS proyecto_id, p.nombre AS obra,
+      (SELECT COUNT(*) FROM archivos a WHERE a.capitulo_id = c.id AND a.etapa = 'raw') AS raws
     FROM capitulos c JOIN proyectos p ON p.id = c.proyecto_id
     WHERE p.estado = 'activo' AND c.estado IN ('pendiente','en_proceso','listo')
     ORDER BY p.nombre COLLATE NOCASE, c.orden`).all();
@@ -92,6 +94,7 @@ async function tareaPropiaActiva(env, staff, tareaId) {
 
 export async function entregarTarea(env, staff, tareaId) {
   const t = await tareaPropiaActiva(env, staff, tareaId);
+  await exigirArchivos(env, t.capitulo_id, t.rol);
   const cfg = await config(env);
   const pts = Number(cfg.puntos_entrega || 1);
   const ahora = ahoraISO();

@@ -30,10 +30,11 @@ class PanelAPI:
             )
         return self._sesion
 
-    async def _llamar(self, metodo, ruta, params=None, datos=None):
+    async def _llamar(self, metodo, ruta, params=None, datos=None, crudo=None):
         s = await self._s()
         try:
-            async with s.request(metodo, f"{self.base}/api/bot/{ruta}", params=params, json=datos) as r:
+            extra = {"data": crudo} if crudo is not None else {"json": datos}
+            async with s.request(metodo, f"{self.base}/api/bot/{ruta}", params=params, **extra) as r:
                 cuerpo = await r.json(content_type=None)
                 if r.status >= 400:
                     raise ApiError((cuerpo or {}).get("error", f"Error {r.status}"))
@@ -64,6 +65,10 @@ class PanelAPI:
 
     async def entregar(self, discord_id, tarea_id):
         return await self._llamar("POST", "entregar", datos={"discord_id": str(discord_id), "tarea_id": tarea_id})
+
+    async def subir(self, discord_id, tarea_id, nombre, contenido: bytes):
+        """Sube un archivo (adjunto de Discord) como trabajo de la tarea."""
+        return await self._llamar("PUT", "subir", {"discord_id": str(discord_id), "tarea_id": str(tarea_id), "nombre": nombre}, crudo=contenido)
 
     async def solicitar(self, discord_id, tarea_id, tipo, dias=None, motivo=None):
         return await self._llamar("POST", "solicitar", datos={

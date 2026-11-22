@@ -4,6 +4,7 @@ import * as T from "./tareas.js";
 import * as A from "./admin.js";
 import { rutasBot } from "./bot.js";
 import { PERMISOS, leerPermisos, permisosDe, exigir, validarPermisos } from "./permisos.js";
+import * as F from "./archivos.js";
 import { rutasDiscord, discordActivo } from "./discord.js";
 import { ejecutarCron, reporteDiario, vencerTareas } from "./cron.js";
 
@@ -113,6 +114,20 @@ async function api(req, env, url) {
   }
 
   // ---------- Mercado y ranking (según permisos) ----------
+  // ---------- Archivos (R2) ----------
+  let ma;
+  if ((ma = ruta.match(/^capitulos\/(\d+)\/archivos$/)) && m === "GET") {
+    const id = Number(ma[1]);
+    if (!(await F.puedeVer(env, yo, puedo, id))) fallo("Toma una tarea de este capítulo para ver sus archivos", 403);
+    return json(await F.listar(env, id));
+  }
+  if ((ma = ruta.match(/^capitulos\/(\d+)\/archivos\/(raw|trad|clean|type)$/)) && m === "PUT") {
+    return json(await F.subir(req, env, yo, puedo, Number(ma[1]), ma[2], url.searchParams.get("nombre")));
+  }
+  if ((ma = ruta.match(/^archivos\/(\d+)$/)) && m === "GET") return F.descargar(env, yo, puedo, Number(ma[1]));
+  if ((ma = ruta.match(/^archivos\/(\d+)$/)) && m === "DELETE") return json(await F.borrar(env, yo, puedo, Number(ma[1])));
+  if (ruta === "archivos/formatos") return json(F.FORMATOS);
+
   if (ruta === "mercado") { exige("ver_mercado"); return json(T.filtrarMercado(await T.mercado(env, yo), puedo)); }
   if (ruta === "tareas/tomar" && m === "POST") {
     exige("tomar_tareas");
@@ -152,14 +167,14 @@ async function api(req, env, url) {
   if (ruta === "admin/eventos") { exige("ver_actividad"); return json(await A.eventos(env)); }
 
   // ---------- Proyectos y capítulos ----------
-  if (ruta === "admin/proyectos" && m === "GET") { exige("gestionar_proyectos", "asignar_tareas"); return json(await A.listarProyectos(env)); }
+  if (ruta === "admin/proyectos" && m === "GET") { exige("gestionar_proyectos", "asignar_tareas", "subir_raws"); return json(await A.listarProyectos(env)); }
   r = ruta.match(/^admin\/proyectos\/(\d+)\/capitulos$/);
-  if (r && m === "GET") { exige("gestionar_proyectos", "asignar_tareas"); return json(await A.listarCapitulos(env, Number(r[1]))); }
+  if (r && m === "GET") { exige("gestionar_proyectos", "asignar_tareas", "subir_raws"); return json(await A.listarCapitulos(env, Number(r[1]))); }
   if (ruta === "admin/proyectos" && m === "POST") { exige("gestionar_proyectos"); return json({ id: await A.crearProyecto(env, yo, body) }); }
   r = ruta.match(/^admin\/proyectos\/(\d+)$/);
   if (r && m === "PATCH") { exige("gestionar_proyectos"); await A.editarProyecto(env, yo, Number(r[1]), body); return json({ ok: true }); }
   r = ruta.match(/^admin\/proyectos\/(\d+)\/capitulos$/);
-  if (r && m === "POST") { exige("gestionar_proyectos"); return json(await A.crearCapitulos(env, yo, Number(r[1]), body.capitulos)); }
+  if (r && m === "POST") { exige("gestionar_proyectos", "subir_raws"); return json(await A.crearCapitulos(env, yo, Number(r[1]), body.capitulos)); }
   r = ruta.match(/^admin\/capitulos\/(\d+)$/);
   if (r && m === "PATCH") { exige("gestionar_proyectos"); await A.cambiarEstadoCapitulo(env, yo, Number(r[1]), body.estado); return json({ ok: true }); }
   if (r && m === "DELETE") { exige("gestionar_proyectos"); await A.borrarCapitulo(env, yo, Number(r[1])); return json({ ok: true }); }

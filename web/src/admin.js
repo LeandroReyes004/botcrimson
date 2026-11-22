@@ -138,9 +138,10 @@ export async function listarCapitulos(env, proyectoId) {
     SELECT c.*,
       (SELECT json_group_object(t.rol, json_object('estado', t.estado, 'nombre', s.nombre))
        FROM tareas t JOIN staff s ON s.id = t.staff_id
-       WHERE t.capitulo_id = c.id AND t.estado IN ('activa','entregada')) AS roles
+       WHERE t.capitulo_id = c.id AND t.estado IN ('activa','entregada')) AS roles,
+      (SELECT json_group_object(etapa, n) FROM (SELECT etapa, COUNT(*) AS n FROM archivos a WHERE a.capitulo_id = c.id GROUP BY etapa)) AS archivos
     FROM capitulos c WHERE c.proyecto_id = ? ORDER BY c.orden`).bind(proyectoId).all();
-  return results.map((c) => ({ ...c, roles: c.roles ? JSON.parse(c.roles) : {} }));
+  return results.map((c) => ({ ...c, roles: c.roles ? JSON.parse(c.roles) : {}, archivos: c.archivos ? JSON.parse(c.archivos) : {} }));
 }
 
 // Acepta "12", "1-10", "1-10, 12.5, 15"
@@ -190,7 +191,7 @@ export async function borrarCapitulo(env, actor, id) {
 // ---------- Config ----------
 const CLAVES_CONFIG = {
   dias_limite: [1, 30], max_tareas_activas: [1, 50], puntos_entrega: [0, 100],
-  puntos_vencida: [-100, 0], cuota_mensual: [0, 100], hora_reporte: [0, 23], horas_gracia: [0, 168],
+  puntos_vencida: [-100, 0], cuota_mensual: [0, 100], hora_reporte: [0, 23], horas_gracia: [0, 168], exigir_archivos: [0, 1],
 };
 export async function guardarConfig(env, actor, b) {
   const stmts = [];
