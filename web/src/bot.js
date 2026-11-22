@@ -1,6 +1,7 @@
 // API para el bot de Discord. Se autentica con: Authorization: Bearer <BOT_API_KEY>
-import { fallo, json, iguales, discordId, entero, ROLES, tokenAleatorio, ahoraISO } from "./util.js";
-import { perfil, tareasDe, ranking, mercado, tomarTarea, entregarTarea, solicitar } from "./tareas.js";
+import { fallo, json, iguales, discordId, entero, ROLES, tokenAleatorio, ahoraISO, config } from "./util.js";
+import { perfil, tareasDe, ranking, mercado, tomarTarea, entregarTarea, solicitar, filtrarMercado, filtrarRanking } from "./tareas.js";
+import { leerPermisos, permisosDe } from "./permisos.js";
 import { liberarTareasDe } from "./admin.js";
 
 async function staffPorDiscord(env, id) {
@@ -16,16 +17,34 @@ export async function rutasBot(req, env, ruta, url) {
   const q = (k) => url.searchParams.get(k);
   const body = m === "POST" ? await req.json().catch(() => ({})) : {};
 
+  // Permisos de quien escribe el comando (pide = ID de Discord del autor)
+  const permisos = leerPermisos(await config(env));
+  const permisosDePide = async (id) => {
+    const s = await staffPorDiscord(env, id);
+    return { s, puedo: permisosDe(s, permisos) };
+  };
+  const exigeBot = (puedo, clave) => { if (!puedo[clave]) fallo("No tienes permiso para esto. Pídeselo a un admin.", 403); };
+
   if (ruta === "perfil" && m === "GET") return json(await perfil(env, await staffPorDiscord(env, q("discord_id"))));
-  if (ruta === "tareas" && m === "GET") return json(await tareasDe(env, (await staffPorDiscord(env, q("discord_id"))).id));
-  if (ruta === "ranking" && m === "GET") return json(await ranking(env, Number(q("mes") || 0)));
+  if (ruta === "tareas" && m === "GET") {
+    const objetivo = await staffPorDiscord(env, q("discord_id"));
+    if (q("pide") && q("pide") !== q("discord_id")) exigeBot((await permisosDePide(q("pide"))).puedo, "ver_tareas_otros");
+    return json(await tareasDe(env, objetivo.id));
+  }
+  if (ruta === "ranking" && m === "GET") {
+    const { s, puedo } = await permisosDePide(q("pide"));
+    exigeBot(puedo, "ver_ranking");
+    return json(filtrarRanking(await ranking(env, Number(q("mes") || 0)), s.id, puedo));
+  }
   if (ruta === "mercado" && m === "GET") {
-    const s = q("discord_id") ? await staffPorDiscord(env, q("discord_id")) : null;
-    const caps = await mercado(env, s);
+    const { s, puedo } = await permisosDePide(q("discord_id"));
+    exigeBot(puedo, "ver_mercado");
+    const caps = filtrarMercado(await mercado(env, s), puedo);
     return json(caps.filter((c) => ROLES.some((r) => c.roles[r].estado === "libre")));
   }
   if (ruta === "tomar" && m === "POST") {
-    const s = await staffPorDiscord(env, body.discord_id);
+    const { s, puedo } = await permisosDePide(body.discord_id);
+    exigeBot(puedo, "tomar_tareas");
     return json(await tomarTarea(env, s, entero(body.capitulo_id, "capitulo_id", 1, 1e9), String(body.rol), "discord"));
   }
   if (ruta === "entregar" && m === "POST") {

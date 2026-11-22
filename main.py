@@ -101,7 +101,7 @@ async def tareas_de(ctx, usuario: discord.Member):
 
 
 async def _mostrar_tareas(ctx, miembro):
-    lista = await api.tareas(miembro.id)
+    lista = await api.tareas(miembro.id, ctx.author.id)
     if not lista:
         await ctx.send(f"✅ **{miembro.display_name}** no tiene tareas pendientes.")
         return
@@ -172,13 +172,17 @@ async def mi_perfil(ctx):
 
 @bot.command(name="ranking", aliases=["top"])
 async def ranking(ctx):
-    filas = await api.ranking()
+    filas = await api.ranking(ctx.author.id)
     if not filas:
         await ctx.send("Todavía no hay puntos este mes.")
         return
     medallas = ["🥇", "🥈", "🥉"]
-    texto = "\n".join(f"{medallas[i] if i < 3 else f'**{i+1}.**'} {r['nombre']}: **{r['puntos']} pts** ({r['entregas']} entregas)"
-                      for i, r in enumerate(filas[:10]))
+    def linea(i, r):
+        puesto = medallas[i] if i < 3 else f"**{i+1}.**"
+        if r.get("oculto"):  # el admin decidió no mostrar los puntos de los demás
+            return f"{puesto} {r['nombre']}"
+        return f"{puesto} {r['nombre']}: **{r['puntos']} pts** ({r['entregas']} entregas)"
+    texto = "\n".join(linea(i, r) for i, r in enumerate(filas[:10]))
     await ctx.send(embed=discord.Embed(title="🏆 Ranking del mes", color=COLOR, description=texto))
 
 

@@ -3,6 +3,7 @@ import { ApiError, fallo, json, texto, entero, hashPassword, verificarPassword, 
 import * as T from "./tareas.js";
 import * as A from "./admin.js";
 import { rutasBot } from "./bot.js";
+import { PERMISOS, leerPermisos, permisosDe, exigir, validarPermisos } from "./permisos.js";
 import { ejecutarCron, reporteDiario, vencerTareas } from "./cron.js";
 
 const DIAS_SESION = 7;
@@ -22,7 +23,6 @@ async function crearSesion(env, staffId) {
   return `sid=${tok}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${DIAS_SESION * 86400}`;
 }
 const publico = (s) => ({ id: s.id, usuario: s.usuario, nombre: s.nombre, discord_id: s.discord_id, nivel: s.nivel, roles: s.roles, hiatus_hasta: s.hiatus_hasta });
-const esLider = (s) => s.nivel === "admin" || s.nivel === "lider";
 
 async function api(req, env, url) {
   const ruta = url.pathname.replace(/^\/api\//, "");
@@ -86,7 +86,12 @@ async function api(req, env, url) {
     await env.DB.prepare("DELETE FROM sesiones WHERE token = ?").bind(cookie(req, "sid")).run();
     return json({ ok: true }, 200, { "set-cookie": "sid=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax" });
   }
-  if (ruta === "yo") return json({ ...publico(yo), config: await config(env) });
+  const cfg = await config(env);
+  const permisos = leerPermisos(cfg);
+  const puedo = permisosDe(yo, permisos);
+  const exige = (...claves) => { if (!claves.some((k) => puedo[k])) exigir(yo, permisos, claves[0]); };
+
+  if (ruta === "yo") return json({ ...publico(yo), config: cfg, permisos: puedo });
   if (ruta === "yo/password" && m === "POST") {
     if (!(await verificarPassword(String(body.actual || ""), yo.password_hash))) fallo("La contraseña actual no es correcta", 403);
     if (String(body.nueva || "").length < 8) fallo("La nueva contraseña debe tener al menos 8 caracteres");
@@ -95,12 +100,9 @@ async function api(req, env, url) {
     return json({ ok: true });
   }
 
-  // ---------- Staff: mercado y mis tareas ----------
-  if (ruta === "mercado") return json(await T.mercado(env, yo));
+  // ---------- Lo de cada persona (siempre puede ver lo suyo) ----------
   if (ruta === "perfil") return json(await T.perfil(env, yo));
   if (ruta === "mis-tareas") return json(await T.tareasDe(env, yo.id, url.searchParams.get("todas") !== "1"));
-  if (ruta === "ranking") return json(await T.ranking(env, Number(url.searchParams.get("mes") || 0)));
-  if (ruta === "tareas/tomar" && m === "POST") return json(await T.tomarTarea(env, yo, entero(body.capitulo_id, "capitulo_id", 1, 1e9), String(body.rol)));
   let r = ruta.match(/^tareas\/(\d+)\/(entregar|solicitar)$/);
   if (r && m === "POST") {
     const id = Number(r[1]);
@@ -108,51 +110,71 @@ async function api(req, env, url) {
     return json(await T.solicitar(env, yo, id, body.tipo, Number(body.dias), body.motivo));
   }
 
-  // ---------- Líderes y admins ----------
-  if (!esLider(yo)) fallo("Solo para líderes", 403);
+  // ---------- Mercado y ranking (según permisos) ----------
+  if (ruta === "mercado") { exige("ver_mercado"); return json(T.filtrarMercado(await T.mercado(env, yo), puedo)); }
+  if (ruta === "tareas/tomar" && m === "POST") {
+    exige("tomar_tareas");
+    return json(await T.tomarTarea(env, yo, entero(body.capitulo_id, "capitulo_id", 1, 1e9), String(body.rol)));
+  }
+  if (ruta === "ranking") { exige("ver_ranking"); return json(T.filtrarRanking(await T.ranking(env, Number(url.searchParams.get("mes") || 0)), yo.id, puedo)); }
 
-  if (ruta === "admin/tareas") return json(await T.tareasActivas(env, url.searchParams.get("filtro") || ""));
+  // ---------- Gestión ----------
+  if (ruta === "admin/resumen") { exige("ver_resumen"); return json(await A.resumen(env, inicioMesISO(env.ZONA_HORARIA || "America/Santo_Domingo"))); }
+  if (ruta === "admin/tareas") { exige("revisar_solicitudes", "asignar_tareas"); return json(await T.tareasActivas(env, url.searchParams.get("filtro") || "")); }
   r = ruta.match(/^admin\/tareas\/(\d+)\/(resolver|quitar)$/);
   if (r && m === "POST") {
     const id = Number(r[1]);
-    if (r[2] === "quitar") return json(await T.quitarTarea(env, yo, id));
+    if (r[2] === "quitar") { exige("asignar_tareas"); return json(await T.quitarTarea(env, yo, id)); }
+    exige("revisar_solicitudes");
     return json(await T.resolverSolicitud(env, yo, id, !!body.aprobar, body.dias ? entero(body.dias, "días", 1, 30) : undefined));
   }
   if (ruta === "admin/asignar" && m === "POST") {
+    exige("asignar_tareas");
     return json(await T.asignarTarea(env, yo, entero(body.capitulo_id, "capítulo", 1, 1e9), String(body.rol), entero(body.staff_id, "miembro", 1, 1e9),
       body.dias ? entero(body.dias, "días", 1, 60) : undefined));
   }
-  if (ruta === "admin/staff" && m === "GET") return json(await A.listarStaff(env));
-  if (ruta === "admin/staff" && m === "POST") return json({ id: await A.crearStaff(env, yo, body) });
+
+  // ---------- Staff ----------
+  if (ruta === "admin/staff" && m === "GET") { exige("ver_staff", "asignar_tareas"); return json(await A.listarStaff(env)); }
+  if (ruta === "admin/staff" && m === "POST") { exige("editar_staff"); return json({ id: await A.crearStaff(env, yo, body) }); }
   r = ruta.match(/^admin\/staff\/(\d+)$/);
-  if (r && m === "PATCH") { await A.editarStaff(env, yo, Number(r[1]), body); return json({ ok: true }); }
+  if (r && m === "PATCH") { exige("editar_staff"); await A.editarStaff(env, yo, Number(r[1]), body); return json({ ok: true }); }
   if (r && m === "GET") {
+    exige("ver_staff");
     const s = await env.DB.prepare("SELECT * FROM staff WHERE id = ?").bind(Number(r[1])).first();
     if (!s) fallo("Miembro no encontrado", 404);
     return json({ ...(await T.perfil(env, s)), historial: await T.tareasDe(env, s.id, false) });
   }
   r = ruta.match(/^admin\/staff\/(\d+)\/puntos$/);
-  if (r && m === "POST") { await A.ajustarPuntos(env, yo, Number(r[1]), Number(body.puntos), body.nota); return json({ ok: true }); }
-  if (ruta === "admin/resumen") return json(await A.resumen(env, inicioMesISO(env.ZONA_HORARIA || "America/Santo_Domingo")));
+  if (r && m === "POST") { exige("ajustar_puntos"); await A.ajustarPuntos(env, yo, Number(r[1]), Number(body.puntos), body.nota); return json({ ok: true }); }
+  if (ruta === "admin/eventos") { exige("ver_actividad"); return json(await A.eventos(env)); }
 
-  if (ruta === "admin/proyectos" && m === "GET") return json(await A.listarProyectos(env));
-  if (ruta === "admin/proyectos" && m === "POST") return json({ id: await A.crearProyecto(env, yo, body) });
-  r = ruta.match(/^admin\/proyectos\/(\d+)$/);
-  if (r && m === "PATCH") { await A.editarProyecto(env, yo, Number(r[1]), body); return json({ ok: true }); }
+  // ---------- Proyectos y capítulos ----------
+  if (ruta === "admin/proyectos" && m === "GET") { exige("gestionar_proyectos", "asignar_tareas"); return json(await A.listarProyectos(env)); }
   r = ruta.match(/^admin\/proyectos\/(\d+)\/capitulos$/);
-  if (r && m === "GET") return json(await A.listarCapitulos(env, Number(r[1])));
-  if (r && m === "POST") return json(await A.crearCapitulos(env, yo, Number(r[1]), body.capitulos));
+  if (r && m === "GET") { exige("gestionar_proyectos", "asignar_tareas"); return json(await A.listarCapitulos(env, Number(r[1]))); }
+  if (ruta === "admin/proyectos" && m === "POST") { exige("gestionar_proyectos"); return json({ id: await A.crearProyecto(env, yo, body) }); }
+  r = ruta.match(/^admin\/proyectos\/(\d+)$/);
+  if (r && m === "PATCH") { exige("gestionar_proyectos"); await A.editarProyecto(env, yo, Number(r[1]), body); return json({ ok: true }); }
+  r = ruta.match(/^admin\/proyectos\/(\d+)\/capitulos$/);
+  if (r && m === "POST") { exige("gestionar_proyectos"); return json(await A.crearCapitulos(env, yo, Number(r[1]), body.capitulos)); }
   r = ruta.match(/^admin\/capitulos\/(\d+)$/);
-  if (r && m === "PATCH") { await A.cambiarEstadoCapitulo(env, yo, Number(r[1]), body.estado); return json({ ok: true }); }
-  if (r && m === "DELETE") { await A.borrarCapitulo(env, yo, Number(r[1])); return json({ ok: true }); }
-
-  if (ruta === "admin/eventos") return json(await A.eventos(env));
+  if (r && m === "PATCH") { exige("gestionar_proyectos"); await A.cambiarEstadoCapitulo(env, yo, Number(r[1]), body.estado); return json({ ok: true }); }
+  if (r && m === "DELETE") { exige("gestionar_proyectos"); await A.borrarCapitulo(env, yo, Number(r[1])); return json({ ok: true }); }
 
   // ---------- Solo admin ----------
   if (yo.nivel !== "admin") fallo("Solo para administradores", 403);
   if (ruta === "admin/config" && m === "POST") { await A.guardarConfig(env, yo, body); return json(await config(env)); }
-  if (ruta === "admin/revisar-vencidas" && m === "POST") return json({ vencidas: await vencerTareas(env, await config(env)) });
-  if (ruta === "admin/reporte" && m === "POST") return json({ enviado: await reporteDiario(env, await config(env), true) });
+  if (ruta === "admin/permisos" && m === "GET") return json({ lista: PERMISOS, valores: permisos });
+  if (ruta === "admin/permisos" && m === "POST") {
+    const limpio = validarPermisos(body);
+    await env.DB.prepare("INSERT INTO config (clave, valor) VALUES ('permisos', ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor")
+      .bind(JSON.stringify(limpio)).run();
+    await registrar(env, yo.id, "permisos", limpio);
+    return json({ ok: true, valores: limpio });
+  }
+  if (ruta === "admin/revisar-vencidas" && m === "POST") return json({ vencidas: await vencerTareas(env, cfg) });
+  if (ruta === "admin/reporte" && m === "POST") return json({ enviado: await reporteDiario(env, cfg, true) });
 
   fallo("Ruta no encontrada", 404);
 }

@@ -48,11 +48,12 @@ class PanelAPI:
     async def perfil(self, discord_id):
         return await self._llamar("GET", "perfil", {"discord_id": str(discord_id)})
 
-    async def tareas(self, discord_id):
-        return await self._llamar("GET", "tareas", {"discord_id": str(discord_id)})
+    async def tareas(self, discord_id, pide=None):
+        """pide = quien escribe el comando (para revisar si puede ver tareas de otros)."""
+        return await self._llamar("GET", "tareas", {"discord_id": str(discord_id), "pide": str(pide or discord_id)})
 
-    async def ranking(self, mes=0):
-        return await self._llamar("GET", "ranking", {"mes": str(mes)})
+    async def ranking(self, pide, mes=0):
+        return await self._llamar("GET", "ranking", {"mes": str(mes), "pide": str(pide)})
 
     async def mercado(self, discord_id=None):
         return await self._llamar("GET", "mercado", {"discord_id": str(discord_id)} if discord_id else None)

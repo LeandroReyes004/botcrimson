@@ -83,15 +83,28 @@ function pantallaSetup() {
   };
 }
 
-const lider = () => YO && (YO.nivel === "admin" || YO.nivel === "lider");
-const PESTANAS = () => [
-  ["mercado", "Mercado"], ["mis", "Mis tareas"], ["ranking", "Ranking"], ["perfil", "Mi perfil"],
-  ...(lider() ? [["|"], ["resumen", "Resumen"], ["control", "Control de tareas"], ["proyectos", "Proyectos"], ["staff", "Staff"], ["actividad", "Actividad"]] : []),
-  ...(YO?.nivel === "admin" ? [["config", "Ajustes"]] : []),
-];
+const P = (claves) => YO?.nivel === "admin" || claves.split("|").some((k) => YO?.permisos?.[k]);
+const PESTANAS = () => {
+  const gestion = [["resumen", "Resumen", "ver_resumen"], ["control", "Control de tareas", "revisar_solicitudes|asignar_tareas"],
+    ["proyectos", "Proyectos", "gestionar_proyectos|asignar_tareas"], ["staff", "Staff", "ver_staff"], ["actividad", "Actividad", "ver_actividad"]]
+    .filter(([, , k]) => P(k));
+  return [
+    ...[["mercado", "Mercado", "ver_mercado"], ["mis", "Mis tareas"], ["ranking", "Ranking", "ver_ranking"], ["perfil", "Mi perfil"]].filter(([, , k]) => !k || P(k)),
+    ...(gestion.length ? [["|"], ...gestion] : []),
+    ...(YO?.nivel === "admin" ? [["config", "Ajustes"], ["permisos", "Permisos"]] : []),
+  ];
+};
+// Quita botones y controles que la persona no puede usar (marcados con data-perm="clave|otra")
+function aplicarPermisos(raiz = document) {
+  raiz.querySelectorAll("[data-perm]").forEach((el) => {
+    if (P(el.dataset.perm)) return;
+    if (el.tagName === "SELECT") { el.disabled = true; el.removeAttribute("data-perm"); } else el.remove();
+  });
+}
+new MutationObserver(() => aplicarPermisos()).observe(document.body, { childList: true, subtree: true });
 
 function pantallaPanel() {
-  VISTA = lider() ? "resumen" : "mercado";
+  VISTA = P("ver_resumen") ? "resumen" : P("ver_mercado") ? "mercado" : "mis";
   $("#app").innerHTML = `<header><h1>Crimson Scan</h1>
       <div class="fila"><span class="muted">${esc(YO.nombre)} · ${NIVEL[YO.nivel]}</span><button class="sec mini" id="salir">Salir</button></div></header>
     <nav id="nav"></nav><main id="main"></main>`;
@@ -104,7 +117,8 @@ async function render() {
   $("#nav").innerHTML = PESTANAS().map(([k, n]) => k === "|" ? '<span class="sep"></span>' : `<button data-v="${k}" class="${k === VISTA || (k === "staff" && VISTA === "ficha") ? "on" : ""}">${n}</button>`).join("");
   $("#nav").querySelectorAll("button").forEach((b) => (b.onclick = () => { VISTA = b.dataset.v; render(); }));
   const main = $("#main");
-  try { await (VISTAS[VISTA] || VISTAS.mercado)(main); }
+  if (!PESTANAS().some(([k]) => k === VISTA) && VISTA !== "ficha") VISTA = PESTANAS()[0][0];
+  try { await (VISTAS[VISTA] || VISTAS.mis)(main); }
   catch (e) { main.innerHTML = `<div class="card">${esc(e.message)}</div>`; }
 }
 
@@ -190,7 +204,7 @@ const VISTAS = {
     main.innerHTML = `<div class="card"><div class="fila" style="justify-content:space-between"><h2>Ranking ${mes === 0 ? "de este mes" : "del mes pasado"}</h2>
       <button class="sec mini" id="cambiarMes">${mes === 0 ? "Ver mes pasado" : "Ver este mes"}</button></div>
       ${filas.length ? `<div class="tabla"><table><tr><th>#</th><th>Nombre</th><th>Puntos</th><th>Entregas</th><th>Vencidas</th></tr>
-      ${filas.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.nombre)}</td><td><b>${r.puntos}</b></td><td>${r.entregas}</td><td>${r.vencidas}</td></tr>`).join("")}
+      ${filas.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.nombre)}</td>${r.oculto ? '<td class="muted">—</td><td class="muted">—</td><td class="muted">—</td>' : `<td><b>${r.puntos}</b></td><td>${r.entregas}</td><td>${r.vencidas}</td>`}</tr>`).join("")}
       </table></div>` : '<p class="muted">Aún no hay puntos este mes.</p>'}</div>`;
     $("#cambiarMes").onclick = () => { VISTAS.ranking.mes = mes === 0 ? -1 : 0; render(); };
   },
@@ -226,11 +240,14 @@ const VISTAS = {
           : '<p class="muted">Todo el staff activo tiene trabajo.</p>'}</div>
         <div class="card"><h2>Listos para publicar (${r.listosLista.length})</h2>
           ${r.listosLista.length ? r.listosLista.map((c) => `<div class="rol-fila"><span>${esc(c.obra)} · cap. ${esc(c.numero)}</span>
-            <button class="ok mini" data-publicar="${c.id}">Marcar publicado</button></div>`).join("") : '<p class="muted">Nada pendiente de publicar.</p>'}
+            <button class="ok mini" data-publicar="${c.id}" data-perm="gestionar_proyectos">Marcar publicado</button></div>`).join("") : '<p class="muted">Nada pendiente de publicar.</p>'}
           ${r.hiatus.length ? `<h3>En hiatus</h3>${r.hiatus.map((s) => `<div class="rol-fila"><a href="#" data-ficha="${s.id}">${esc(s.nombre)}</a><span class="muted">hasta ${fecha(s.hiatus_hasta)}</span></div>`).join("")}` : ""}
         </div>
       </div>`;
-    main.querySelectorAll("[data-ir]").forEach((d) => (d.onclick = () => { VISTA = d.dataset.ir; render(); }));
+    main.querySelectorAll("[data-ir]").forEach((d) => {
+      if (!PESTANAS().some(([k]) => k === d.dataset.ir)) { d.removeAttribute("data-ir"); d.style.cursor = ""; return; }
+      d.onclick = () => { VISTA = d.dataset.ir; render(); };
+    });
     main.querySelectorAll("[data-ficha]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); abrirFicha(Number(a.dataset.ficha)); }));
     main.querySelectorAll("[data-publicar]").forEach((b) => (b.onclick = () =>
       accion(() => post(`admin/capitulos/${b.dataset.publicar}`, { estado: "publicado" }, "PATCH"), "¡Publicado! Se avisó en Discord")));
@@ -243,12 +260,12 @@ const VISTAS = {
     main.innerHTML = `<p><a href="#" id="volver">← Volver al staff</a></p>` + fichaHTML(p, true) +
       `<div class="card"><h2>Historial de tareas</h2>${tablaHistorial(p.historial.filter((t) => t.estado !== "activa"))}</div>`;
     $("#volver").onclick = (e) => { e.preventDefault(); VISTA = "staff"; render(); };
-    $("#editar").onclick = () => editarPersona(p);
-    $("#puntos").onclick = () => dialogo(`Ajustar puntos de ${p.nombre}`, `
+    if ($("#editar")) $("#editar").onclick = () => editarPersona(p);
+    if ($("#puntos")) $("#puntos").onclick = () => dialogo(`Ajustar puntos de ${p.nombre}`, `
       <label>Puntos (positivo = bono, negativo = penalización) <input name="puntos" type="number" min="-50" max="50" required></label>
       <label>Motivo <input name="nota" maxlength="200" placeholder="Ej: ayudó con un cap urgente" required></label>`,
       (d) => post(`admin/staff/${p.id}/puntos`, { puntos: Number(d.puntos), nota: d.nota }), "Puntos ajustados");
-    $("#hiatus").onclick = () => dialogo(`Hiatus de ${p.nombre}`, `
+    if ($("#hiatus")) $("#hiatus").onclick = () => dialogo(`Hiatus de ${p.nombre}`, `
       <label>Días de hiatus (0 = quitar) <input name="dias" type="number" min="0" max="365" value="${enHiatus(p) ? 0 : 7}" required></label>
       <p class="muted">En hiatus no puede tomar tareas nuevas. Sus tareas actuales siguen igual.</p>`,
       (d) => post(`admin/staff/${p.id}`, { hiatus_dias: Number(d.dias) }, "PATCH"), "Hiatus actualizado");
@@ -264,12 +281,12 @@ const VISTAS = {
       <tr><th>Quién</th><th>Tarea</th><th>Pide</th><th>Motivo</th><th></th></tr>
       ${sol.map((t) => `<tr><td>${esc(t.staff_nombre)}</td><td>${esc(t.obra)} ${esc(t.cap)} · ${t.rol_nombre}<br>${chipEstadoTarea(t)}</td>
         <td>${t.solicitud === "extension" ? `+${t.solicitud_dias} días` : "Cancelar"}</td><td>${esc(t.solicitud_motivo)}</td>
-        <td class="fila"><button class="ok mini" data-res="${t.id}" data-ok="1">Aprobar</button><button class="sec mini" data-res="${t.id}" data-ok="0">Rechazar</button></td></tr>`).join("")}
+        <td class="fila"><button class="ok mini" data-res="${t.id}" data-ok="1" data-perm="revisar_solicitudes">Aprobar</button><button class="sec mini" data-res="${t.id}" data-ok="0" data-perm="revisar_solicitudes">Rechazar</button></td></tr>`).join("")}
       </table></div>` : '<p class="muted">No hay solicitudes.</p>'}</div>
       <div class="card"><h2>Todas las tareas activas (${ts.length})</h2>${ts.length ? `<div class="tabla"><table>
       <tr><th>Quién</th><th>Obra</th><th>Cap.</th><th>Rol</th><th>Vence</th><th>Tiempo</th><th></th></tr>
       ${ts.map((t) => `<tr><td>${esc(t.staff_nombre)}</td><td>${esc(t.obra)}</td><td>${esc(t.cap)}</td><td>${t.rol_nombre}</td><td>${fecha(t.limite)}</td>
-        <td>${chipEstadoTarea(t)}</td><td><button class="sec mini" data-quitar="${t.id}">Quitar</button></td></tr>`).join("")}</table></div>` : '<p class="muted">Nadie tiene tareas activas.</p>'}</div>`;
+        <td>${chipEstadoTarea(t)}</td><td><button class="sec mini" data-quitar="${t.id}" data-perm="asignar_tareas">Quitar</button></td></tr>`).join("")}</table></div>` : '<p class="muted">Nadie tiene tareas activas.</p>'}</div>`;
     main.querySelectorAll("[data-res]").forEach((b) => (b.onclick = () =>
       accion(() => post(`admin/tareas/${b.dataset.res}/resolver`, { aprobar: b.dataset.ok === "1" }), b.dataset.ok === "1" ? "Aprobada" : "Rechazada")));
     main.querySelectorAll("[data-quitar]").forEach((b) => (b.onclick = () => {
@@ -281,14 +298,14 @@ const VISTAS = {
     const ps = await api("admin/proyectos");
     const sel = VISTAS.proyectos.sel ?? ps[0]?.id;
     main.innerHTML = `<div class="card"><h2>Proyectos</h2>
-      <form id="np" class="fila"><input name="nombre" placeholder="Nombre del nuevo proyecto" required><button>Crear proyecto</button></form>
+      <form id="np" class="fila" data-perm="gestionar_proyectos"><input name="nombre" placeholder="Nombre del nuevo proyecto" required><button>Crear proyecto</button></form>
       <div class="tabla" style="margin-top:12px"><table><tr><th>Proyecto</th><th>Estado</th><th>Caps.</th><th>Pend.</th><th>En proceso</th><th>Listos</th><th>Publicados</th><th></th></tr>
       ${ps.map((p) => `<tr><td><a href="#" data-sel="${p.id}">${esc(p.nombre)}</a></td>
-        <td><select data-estado="${p.id}">${["activo", "pausado", "terminado"].map((e) => `<option ${p.estado === e ? "selected" : ""}>${e}</option>`).join("")}</select></td>
+        <td><select data-estado="${p.id}" data-perm="gestionar_proyectos">${["activo", "pausado", "terminado"].map((e) => `<option ${p.estado === e ? "selected" : ""}>${e}</option>`).join("")}</select></td>
         <td>${p.total}</td><td>${p.pendientes || 0}</td><td>${p.en_proceso || 0}</td><td>${p.listos || 0}</td><td>${p.publicados || 0}</td>
         <td><button class="sec mini" data-sel="${p.id}">Capítulos</button></td></tr>`).join("")}</table></div></div>
       <div id="caps"></div>`;
-    $("#np").onsubmit = (e) => { e.preventDefault(); accion(() => post("admin/proyectos", Object.fromEntries(new FormData(e.target))), "Proyecto creado"); };
+    if ($("#np")) $("#np").onsubmit = (e) => { e.preventDefault(); accion(() => post("admin/proyectos", Object.fromEntries(new FormData(e.target))), "Proyecto creado"); };
     main.querySelectorAll("[data-sel]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); VISTAS.proyectos.sel = Number(a.dataset.sel); render(); }));
     main.querySelectorAll("[data-estado]").forEach((s) => (s.onchange = () => accion(() => post(`admin/proyectos/${s.dataset.estado}`, { estado: s.value }, "PATCH"), "Estado cambiado")));
     if (sel) await capitulos($("#caps"), ps.find((p) => p.id === sel));
@@ -303,7 +320,7 @@ const VISTAS = {
       && (!busca || `${g.nombre} ${g.usuario || ""} ${g.discord_id || ""}`.toLowerCase().includes(busca)));
     const cuenta = (f) => gente.filter((g) => f === "todos" || estado(g) === f.replace(/s$/, "")).length;
     main.innerHTML = `<div class="card"><div class="fila" style="justify-content:space-between"><h2>Staff</h2>
-      <button id="nuevo">Añadir miembro</button></div>
+      <button id="nuevo" data-perm="editar_staff">Añadir miembro</button></div>
       <div class="fila" style="margin-bottom:10px"><input id="busca" placeholder="Buscar por nombre, usuario o ID de Discord" value="${esc(VISTAS.staff.busca || "")}"></div>
       <div class="filtros">${[["activos", "Activos"], ["hiatus", "En hiatus"], ["inactivos", "Inactivos"], ["todos", "Todos"]]
         .map(([k, n]) => `<button data-filtro="${k}" class="${filtro === k ? "on" : ""}">${n} (${cuenta(k)})</button>`).join("")}</div>
@@ -320,7 +337,7 @@ const VISTAS = {
     };
     main.querySelectorAll("[data-filtro]").forEach((b) => (b.onclick = () => { VISTAS.staff.filtro = b.dataset.filtro; VISTAS.staff(main); }));
     main.querySelectorAll("[data-ficha]").forEach((c) => (c.onclick = () => abrirFicha(Number(c.dataset.ficha))));
-    $("#nuevo").onclick = () => dialogo("Añadir miembro", formPersona(), (d) => post("admin/staff", datosPersona(d)), "Miembro añadido");
+    if ($("#nuevo")) $("#nuevo").onclick = () => dialogo("Añadir miembro", formPersona(), (d) => post("admin/staff", datosPersona(d)), "Miembro añadido");
   },
 
   async actividad(main) {
@@ -328,6 +345,32 @@ const VISTAS = {
     main.innerHTML = `<div class="card"><h2>Actividad reciente</h2><div class="tabla"><table><tr><th>Fecha</th><th>Quién</th><th>Acción</th><th>Detalle</th></tr>
       ${ev.map((e) => `<tr><td class="muted">${fecha(e.fecha)}</td><td>${esc(e.nombre || "Sistema")}</td><td>${esc(e.accion.replace(/_/g, " "))}</td><td class="muted">${esc(e.detalle || "")}</td></tr>`).join("")}
       </table></div></div>`;
+  },
+
+  async permisos(main) {
+    const { lista, valores } = await api("admin/permisos");
+    const grupos = {};
+    for (const [k, txt, g] of lista) (grupos[g] ??= []).push([k, txt]);
+    main.innerHTML = `<div class="card"><h2>Qué puede ver y hacer cada nivel</h2>
+      <p class="muted">Tú (admin) siempre lo ves todo. Cada persona siempre ve sus propias tareas y su perfil. Los cambios se aplican al momento, en la web y en el bot.</p>
+      <form id="fp"><div class="tabla"><table class="permisos">
+      <tr><th>Permiso</th><th class="centro">Líder</th><th class="centro">Staff</th></tr>
+      ${Object.entries(grupos).map(([g, ps]) => `<tr><td colspan="3" class="grupo">${esc(g)}</td></tr>
+        ${ps.map(([k, txt]) => `<tr><td>${esc(txt)}</td>
+          ${["lider", "staff"].map((n) => `<td class="centro"><input type="checkbox" name="${n}.${k}" ${valores[n][k] ? "checked" : ""}></td>`).join("")}</tr>`).join("")}`).join("")}
+      </table></div>
+      <div class="fila" style="margin-top:12px"><button>Guardar permisos</button><button type="button" class="sec" id="defecto">Volver a los valores por defecto</button></div></form></div>`;
+    const leer = () => {
+      const v = { lider: {}, staff: {} };
+      for (const [k] of lista) for (const n of ["lider", "staff"]) v[n][k] = $(`input[name="${n}.${k}"]`).checked;
+      return v;
+    };
+    $("#fp").onsubmit = (e) => { e.preventDefault(); accion(() => post("admin/permisos", leer()), "Permisos guardados"); };
+    $("#defecto").onclick = () => {
+      if (!confirm("¿Volver a los permisos por defecto?")) return;
+      for (const [k, , , l, st] of lista) { $(`input[name="lider.${k}"]`).checked = l; $(`input[name="staff.${k}"]`).checked = st; }
+      toast("Valores por defecto puestos. Pulsa Guardar para aplicarlos.");
+    };
   },
 
   async config(main) {
@@ -356,13 +399,13 @@ async function capitulos(el, p) {
   const [caps, gente] = await Promise.all([api(`admin/proyectos/${p.id}/capitulos`), api("admin/staff")]);
   const activos = gente.filter((g) => g.activo);
   el.innerHTML = `<div class="card"><h2>${esc(p.nombre)}: capítulos</h2>
-    <form id="nc" class="fila"><input name="capitulos" placeholder="Ej: 1-20, 21.5, 25" required><button>Añadir capítulos</button></form>
+    <form id="nc" class="fila" data-perm="gestionar_proyectos"><input name="capitulos" placeholder="Ej: 1-20, 21.5, 25" required><button>Añadir capítulos</button></form>
     <div class="tabla" style="margin-top:12px"><table><tr><th>Cap.</th><th>Estado</th>${ROLES.map((r) => `<th>${ROL[r]}</th>`).join("")}<th></th></tr>
     ${caps.map((c) => `<tr><td><b>${esc(c.numero)}</b></td>
-      <td><select data-cap="${c.id}">${Object.entries(ESTADO_CAP).map(([k, n]) => `<option value="${k}" ${c.estado === k ? "selected" : ""}>${n}</option>`).join("")}</select></td>
-      ${ROLES.map((r) => { const x = c.roles[r]; return `<td>${x ? `<span class="chip ${x.estado}">${esc(x.nombre)}</span>` : `<button class="sec mini" data-asig="${c.id}" data-rol="${r}">Asignar</button>`}</td>`; }).join("")}
-      <td><button class="sec mini" data-borrar="${c.id}">Borrar</button></td></tr>`).join("")}</table></div></div>`;
-  $("#nc").onsubmit = (e) => {
+      <td><select data-cap="${c.id}" data-perm="gestionar_proyectos">${Object.entries(ESTADO_CAP).map(([k, n]) => `<option value="${k}" ${c.estado === k ? "selected" : ""}>${n}</option>`).join("")}</select></td>
+      ${ROLES.map((r) => { const x = c.roles[r]; return `<td>${x ? `<span class="chip ${x.estado}">${esc(x.nombre)}</span>` : `<button class="sec mini" data-perm="asignar_tareas" data-asig="${c.id}" data-rol="${r}">Asignar</button>`}</td>`; }).join("")}
+      <td><button class="sec mini" data-borrar="${c.id}" data-perm="gestionar_proyectos">Borrar</button></td></tr>`).join("")}</table></div></div>`;
+  if ($("#nc")) $("#nc").onsubmit = (e) => {
     e.preventDefault();
     accion(async () => { const r = await post(`admin/proyectos/${p.id}/capitulos`, Object.fromEntries(new FormData(e.target))); toast(`Creados ${r.creados}${r.repetidos ? `, ${r.repetidos} ya existían` : ""}`, "bien"); });
   };
@@ -394,7 +437,7 @@ function tarjetaTarea(t, modo) {
     ${t.solicitud ? `<div class="rol-fila"><span class="muted">Solicitud</span><span class="chip activa">${t.solicitud === "extension" ? `+${t.solicitud_dias} días` : "Cancelar"}: esperando a un líder</span></div>` : ""}
     <div class="fila" style="margin-top:10px">${modo === "propia" ? `<button class="ok mini" data-entregar="${t.id}">Entregar</button>` + (t.solicitud ? "" : `
       <button class="sec mini" data-ext="${t.id}">Pedir más tiempo</button>
-      <button class="sec mini" data-cancel="${t.id}">Pedir cancelar</button>`) : modo === "lider" ? `<button class="sec mini" data-quitar="${t.id}">Quitar tarea</button>` : ""}</div>
+      <button class="sec mini" data-cancel="${t.id}">Pedir cancelar</button>`) : modo === "lider" ? `<button class="sec mini" data-quitar="${t.id}" data-perm="asignar_tareas">Quitar tarea</button>` : ""}</div>
   </div>`;
 }
 
@@ -413,7 +456,7 @@ function fichaHTML(p, admin) {
       <div><h2 style="margin-bottom:4px">${esc(p.nombre)}</h2>
       <div class="muted">${NIVEL[p.nivel]} · ${estado}${p.usuario ? ` · @${esc(p.usuario)}` : ""}${p.creado ? ` · En el equipo desde ${new Date(p.creado).toLocaleDateString("es-DO", { month: "long", year: "numeric" })}` : ""}</div>
       <div style="margin-top:6px">${chipsRoles(p.roles) || '<span class="muted">Sin roles asignados</span>'}</div></div>
-      ${admin ? `<div class="fila"><button class="sec mini" id="editar">Editar</button><button class="sec mini" id="hiatus">Hiatus</button><button class="mini" id="puntos">Ajustar puntos</button></div>` : ""}
+      ${admin ? `<div class="fila"><button class="sec mini" id="editar" data-perm="editar_staff">Editar</button><button class="sec mini" id="hiatus" data-perm="editar_staff">Hiatus</button><button class="mini" id="puntos" data-perm="ajustar_puntos">Ajustar puntos</button></div>` : ""}
     </div>
     <div class="stats" style="margin-top:14px">
       <div class="stat"><span class="muted">Puntos del mes</span><b>${p.puntos_mes}</b></div>
@@ -433,7 +476,7 @@ function fichaHTML(p, admin) {
       </table></div>` : '<p class="muted">Todavía no hay puntos.</p>'}</div>`;
 }
 
-function abrirFicha(id) { VISTAS.ficha.id = id; VISTA = "ficha"; render(); }
+function abrirFicha(id) { if (!P("ver_staff")) return; VISTAS.ficha.id = id; VISTA = "ficha"; render(); }
 
 function formPersona(g = {}) {
   return `

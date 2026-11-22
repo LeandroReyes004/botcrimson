@@ -235,3 +235,19 @@ export async function perfil(env, staff) {
     movimientos: movimientos.map((m) => ({ ...m, rol_nombre: m.rol ? ROL_NOMBRE[m.rol] : null })),
   };
 }
+
+// ---------- Recortes según permisos ----------
+export function filtrarMercado(caps, puedo) {
+  return caps.map((c) => ({
+    ...c,
+    roles: Object.fromEntries(Object.entries(c.roles).map(([r, x]) => {
+      if (x.estado === "libre") return [r, { ...x, puedo: x.puedo && !!puedo.tomar_tareas }];
+      return [r, puedo.ver_nombres ? x : { estado: x.estado, nombre: x.estado === "entregada" ? "Entregado" : "Ocupado" }];
+    })),
+  }));
+}
+
+export function filtrarRanking(filas, miId, puedo) {
+  if (puedo.ver_puntos_otros) return filas;
+  return filas.map((f) => (f.id === miId ? f : { id: f.id, nombre: f.nombre, oculto: true }));
+}

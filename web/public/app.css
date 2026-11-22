@@ -91,3 +91,7 @@ dialog form { display: flex; flex-direction: column; gap: 10px; }
 .cap-card.persona.hiatus { border-left-color: var(--warn); }
 .cap-card.persona.inactivo { border-left-color: var(--line); opacity: .6; }
 code { background: var(--panel2); padding: 1px 6px; border-radius: 4px; }
+/* ---------- Permisos ---------- */
+table.permisos td.grupo { color: var(--crimson2); font-weight: 600; padding-top: 16px; }
+table.permisos .centro { text-align: center; width: 90px; }
+table.permisos input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--crimson); }
