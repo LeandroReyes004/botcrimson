@@ -1,6 +1,8 @@
 name = "crimson-panel"
 main = "src/index.js"
 compatibility_date = "2026-11-01"
+# Dominio propio (va antes de cualquier [tabla] para que no quede dentro de [vars])
+routes = [{ pattern = "panel.scancrimson.com", custom_domain = true }]
 
 [assets]
 directory = "./public"
@@ -24,10 +26,8 @@ crons = ["0 * * * *"]
 [vars]
 ZONA_HORARIA = "America/Santo_Domingo"
 
-# Dominio propio (descomentar al desplegar)
-routes = [{ pattern = "panel.scancrimson.com", custom_domain = true }]
-
 # Secretos (npx wrangler secret put NOMBRE):
 #   BOT_API_KEY          clave que usa el bot de Discord para hablar con la API
 #   DISCORD_WEBHOOK_URL  webhook del canal de avisos (tareas, extensiones, cancelaciones)
 #   DISCORD_WEBHOOK_LIDERES  webhook del canal de líderes (reporte diario)
+#   DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET  login con Discord
