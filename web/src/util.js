@@ -10,8 +10,8 @@ export const json = (data, status = 200, headers = {}) =>
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers },
   });
 
-export const ROLES = ["trad", "clean", "type", "proof"];
-export const ROL_NOMBRE = { trad: "Traducción", clean: "Limpieza", type: "Typeo", proof: "Proofreading" };
+export const ROLES = ["trad", "clean", "type"];
+export const ROL_NOMBRE = { trad: "Traducción", clean: "Limpieza", type: "Typeo" };
 
 // ---------- Fechas (todo en UTC) ----------
 export const ahoraISO = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");

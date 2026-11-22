@@ -1,7 +1,7 @@
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
-const ROLES = ["trad", "clean", "type", "proof"];
-const ROL = { trad: "Traducción", clean: "Limpieza", type: "Typeo", proof: "Proof" };
+const ROLES = ["trad", "clean", "type"];
+const ROL = { trad: "Traducción", clean: "Limpieza", type: "Typeo" };
 const NIVEL = { admin: "Admin", lider: "Líder", staff: "Staff" };
 const ESTADO_CAP = { pendiente: "Pendiente", en_proceso: "En proceso", listo: "Listo", publicado: "Publicado" };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -113,24 +113,55 @@ const chipEstadoTarea = (t) => {
 };
 
 const VISTAS = {
-  async mercado(main) {
+  async mercado(main, silencioso = false) {
     const caps = await api("mercado");
+    const filtro = VISTAS.mercado.filtro || "todos";
+    // Firma de cada capítulo para resaltar los que cambiaron desde la última vez (alguien tomó, entregó o quedó listo)
+    const firma = (c) => c.estado + ROLES.map((r) => c.roles[r].estado + (c.roles[r].nombre || "")).join("|");
+    const antes = VISTAS.mercado.firmas || {};
+    const ahora = Object.fromEntries(caps.map((c) => [c.id, firma(c)]));
+    const cambiados = new Set(silencioso ? caps.filter((c) => antes[c.id] && antes[c.id] !== ahora[c.id]).map((c) => c.id) : []);
+    VISTAS.mercado.firmas = ahora;
+
+    const libres = (c) => ROLES.some((r) => c.roles[r].estado === "libre");
+    const visibles = caps.filter((c) =>
+      filtro === "mios" ? ROLES.some((r) => c.roles[r].estado === "libre" && c.roles[r].puedo)
+      : filtro === "libres" ? libres(c) : filtro === "listos" ? c.estado === "listo" : true);
     const porObra = {};
-    for (const c of caps) (porObra[c.obra] ??= []).push(c);
-    main.innerHTML = `<div class="card"><h2>Mercado de tareas</h2>
-      <p class="muted">Toma una tarea libre de tu rol. Tienes ${esc(YO.config.dias_limite)} días para entregarla.</p>
-      ${Object.keys(porObra).length ? Object.entries(porObra).map(([obra, lista]) => `<div class="obra"><h3>${esc(obra)}</h3>
-        ${lista.map((c) => `<div class="cap"><span class="num">Cap. ${esc(c.numero)}</span>
-          ${ROLES.map((r) => {
-            const x = c.roles[r];
-            if (x.estado === "libre") return `<div class="rol"><span class="muted">${ROL[r]}</span>${x.puedo
-              ? `<button class="mini" data-tomar="${c.id}" data-rol="${r}">Tomar</button>` : '<span class="chip libre">Libre</span>'}</div>`;
-            return `<div class="rol"><span class="muted">${ROL[r]}</span><span class="chip ${x.estado}">${esc(x.nombre)}</span></div>`;
-          }).join("")}</div>`).join("")}</div>`).join("") : '<p class="muted">No hay capítulos pendientes en proyectos activos.</p>'}</div>`;
+    for (const c of visibles) (porObra[c.obra] ??= []).push(c);
+    const cuenta = { todos: caps.length, mios: caps.filter((c) => ROLES.some((r) => c.roles[r].estado === "libre" && c.roles[r].puedo)).length,
+      libres: caps.filter(libres).length, listos: caps.filter((c) => c.estado === "listo").length };
+
+    const filaRol = (c, r) => {
+      const x = c.roles[r];
+      if (x.estado === "libre") return `<div class="rol-fila"><span class="quien"><span class="punto libre"></span><span>${ROL[r]}</span></span>
+        ${x.puedo ? `<button class="mini" data-tomar="${c.id}" data-rol="${r}">Tomar</button>` : '<span class="muted">Libre</span>'}</div>`;
+      const txt = x.estado === "entregada" ? `✓ ${esc(x.nombre)}` : esc(x.nombre);
+      return `<div class="rol-fila"><span class="quien"><span class="punto ${x.estado}"></span><span>${ROL[r]}</span></span>
+        <span class="chip ${x.estado}" title="${x.estado === "entregada" ? "Entregado" : "Trabajando"}">${txt}</span></div>`;
+    };
+
+    main.innerHTML = `<div class="card"><div class="fila" style="justify-content:space-between"><h2>Mercado de tareas</h2><span class="vivo">Se actualiza solo</span></div>
+      <p class="muted">Toma una tarea libre de tu rol. Tienes ${esc(YO.config.dias_limite)} días para entregarla. Cuando los 3 roles se entregan, el capítulo pasa a <b>Listo</b>.</p>
+      <div class="filtros">${[["todos", "Todos"], ["mios", "Para mí"], ["libres", "Con roles libres"], ["listos", "Listos"]]
+        .map(([k, n]) => `<button data-filtro="${k}" class="${filtro === k ? "on" : ""}">${n} (${cuenta[k]})</button>`).join("")}</div>
+      ${Object.keys(porObra).length ? Object.entries(porObra).map(([obra, lista]) => `
+        <div class="obra-titulo"><h3>${esc(obra)}</h3><span class="muted">${lista.length} cap.</span></div>
+        <div class="caps-grid">${lista.map((c) => `<div class="cap-card ${c.estado} ${cambiados.has(c.id) ? "cambio" : ""}">
+          <div class="cap-head"><b>Cap. ${esc(c.numero)}</b><span class="chip ${c.estado === "listo" ? "listo" : c.estado === "en_proceso" ? "activa" : "libre"}">${ESTADO_CAP[c.estado]}</span></div>
+          ${ROLES.map((r) => filaRol(c, r)).join("")}</div>`).join("")}</div>`).join("")
+      : `<p class="muted">${caps.length ? "No hay capítulos con este filtro." : "No hay capítulos pendientes en proyectos activos."}</p>`}</div>`;
+
+    main.querySelectorAll("[data-filtro]").forEach((b) => (b.onclick = () => { VISTAS.mercado.filtro = b.dataset.filtro; VISTAS.mercado(main); }));
     main.querySelectorAll("[data-tomar]").forEach((b) => (b.onclick = () => {
       b.disabled = true;
       accion(() => post("tareas/tomar", { capitulo_id: Number(b.dataset.tomar), rol: b.dataset.rol }), "Tarea tomada. ¡A darle!");
     }));
+    // Refresca cada 20 s mientras el mercado esté abierto
+    clearTimeout(VISTAS.mercado.timer);
+    VISTAS.mercado.timer = setTimeout(() => {
+      if (VISTA === "mercado" && YO && !document.querySelector("dialog[open]")) VISTAS.mercado(main, true).catch(() => {});
+    }, 20000);
   },
 
   async mis(main) {

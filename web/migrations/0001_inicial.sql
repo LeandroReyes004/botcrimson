@@ -9,7 +9,7 @@ CREATE TABLE staff (
   nombre          TEXT NOT NULL,
   discord_id      TEXT UNIQUE,
   nivel           TEXT NOT NULL DEFAULT 'staff' CHECK (nivel IN ('admin','lider','staff')),
-  roles           TEXT NOT NULL DEFAULT '',            -- lista separada por comas: trad,clean,type,proof
+  roles           TEXT NOT NULL DEFAULT '',            -- lista separada por comas: trad,clean,type
   activo          INTEGER NOT NULL DEFAULT 1,
   hiatus_hasta    TEXT,
   intentos        INTEGER NOT NULL DEFAULT 0,
@@ -52,7 +52,7 @@ CREATE INDEX idx_capitulos_proyecto ON capitulos(proyecto_id, orden);
 CREATE TABLE tareas (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   capitulo_id    INTEGER NOT NULL REFERENCES capitulos(id) ON DELETE CASCADE,
-  rol            TEXT NOT NULL CHECK (rol IN ('trad','clean','type','proof')),
+  rol            TEXT NOT NULL CHECK (rol IN ('trad','clean','type')),
   staff_id       INTEGER NOT NULL REFERENCES staff(id),
   estado         TEXT NOT NULL DEFAULT 'activa' CHECK (estado IN ('activa','entregada','cancelada','vencida')),
   limite         TEXT NOT NULL,

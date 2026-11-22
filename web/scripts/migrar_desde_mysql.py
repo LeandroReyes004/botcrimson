@@ -25,7 +25,6 @@ ROL_DE_TEXTO = [
     ("trad", ("trad", "t/c", "tl")),
     ("clean", ("clean", "limpia", "t/c", "redraw")),
     ("type", ("type", "typer", "typeset", "edito")),
-    ("proof", ("proof", "qc", "calidad")),
 ]
 
 
@@ -137,7 +136,7 @@ def generar_sql(datos, zona=timezone.utc):
         eg = (c.get("estado_general") or c.get("estado") or "Pendiente").lower()
         if "public" in eg:
             estado = "publicado"
-        elif all(c.get(k) for k in ("traduccion", "limpieza", "typer", "proof")) or "terminado" in eg:
+        elif all(c.get(k) for k in ("traduccion", "limpieza", "typer")) or "terminado" in eg:
             estado = "listo"
         elif "proceso" in eg or "retras" in eg:
             estado = "en_proceso"

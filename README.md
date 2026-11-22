@@ -10,7 +10,7 @@ main.py, api_client.py   Bot de Discord (Python). Solo habla con la API del pane
 ## Cómo funciona
 
 - **Una sola base de datos (D1)**. El bot y la web usan la misma API, así que no se desincronizan.
-- **Mercado de tareas**: cada capítulo tiene 4 roles (traducción, limpieza, typeo, proof). Cada miembro toma las de su rol.
+- **Mercado de tareas**: cada capítulo tiene 3 roles (traducción, limpieza y typeo); cuando los 3 se entregan, pasa a "Listo". Cada miembro toma las de su rol.
   Nadie puede tomar una tarea ya tomada ni una ya entregada (lo garantiza la base de datos, no solo el código).
 - **Plazos**: 3 días por defecto. Pasado el límite más las horas de gracia, la tarea vence sola: resta puntos y vuelve al mercado.
   Si la persona pidió extensión, se espera a que un líder decida.

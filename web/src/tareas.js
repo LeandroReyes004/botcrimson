@@ -27,7 +27,7 @@ export async function mercado(env, staff) {
   const { results: caps } = await env.DB.prepare(`
     SELECT c.id, c.numero, c.estado, p.id AS proyecto_id, p.nombre AS obra
     FROM capitulos c JOIN proyectos p ON p.id = c.proyecto_id
-    WHERE p.estado = 'activo' AND c.estado IN ('pendiente','en_proceso')
+    WHERE p.estado = 'activo' AND c.estado IN ('pendiente','en_proceso','listo')
     ORDER BY p.nombre COLLATE NOCASE, c.orden`).all();
   const { results: tareas } = await env.DB.prepare(`
     SELECT t.capitulo_id, t.rol, t.estado, t.limite, s.nombre
@@ -98,9 +98,9 @@ export async function entregarTarea(env, staff, tareaId) {
   await env.DB.batch([
     env.DB.prepare("UPDATE tareas SET estado = 'entregada', cerrada = ?, solicitud = NULL WHERE id = ? AND estado = 'activa'").bind(ahora, t.id),
     env.DB.prepare("INSERT INTO puntos (staff_id, tarea_id, puntos, motivo) VALUES (?, ?, ?, 'entrega')").bind(staff.id, t.id, pts),
-    // Si ya se entregaron los 4 roles, el capítulo queda listo para publicar
+    // Si ya se entregaron los 3 roles (trad, clean, type), el capítulo queda listo para publicar
     env.DB.prepare(`UPDATE capitulos SET estado = 'listo' WHERE id = ? AND
-      (SELECT COUNT(DISTINCT rol) FROM tareas WHERE capitulo_id = ? AND estado = 'entregada') = 4`).bind(t.capitulo_id, t.capitulo_id),
+      (SELECT COUNT(DISTINCT rol) FROM tareas WHERE capitulo_id = ? AND estado = 'entregada') = 3`).bind(t.capitulo_id, t.capitulo_id),
   ]);
   await registrar(env, staff.id, "tarea_entregada", { tarea: t.id });
   const atrasada = new Date(t.limite) < new Date();

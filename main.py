@@ -22,12 +22,11 @@ intents.members = True  # necesario para saber quién está en el servidor
 bot = commands.Bot(command_prefix="cd!", intents=intents, help_command=None, case_insensitive=True)
 api = PanelAPI()
 COLOR = 0x660000
-ROLES = {"trad": "Traducción", "clean": "Limpieza", "type": "Typeo", "proof": "Proofreading"}
+ROLES = {"trad": "Traducción", "clean": "Limpieza", "type": "Typeo"}
 ALIAS_ROL = {
     "trad": "trad", "traduccion": "trad", "traducción": "trad", "tl": "trad",
     "clean": "clean", "cleaner": "clean", "limpieza": "clean", "cl": "clean",
     "type": "type", "typer": "type", "typeo": "type", "ts": "type",
-    "proof": "proof", "proofreader": "proof", "qc": "proof", "pr": "proof",
 }
 
 
@@ -82,7 +81,7 @@ async def ayuda(ctx):
     e.add_field(name="`cd!mis_tareas`", value="Tus tareas activas y cuánto tiempo te queda.", inline=False)
     e.add_field(name="`cd!tareas @usuario`", value="Las tareas activas de otra persona.", inline=False)
     e.add_field(name="`cd!mercado`", value="Capítulos con roles libres que puedes tomar.", inline=False)
-    e.add_field(name="`cd!tomar <id_capítulo> <rol>`", value="Tomar una tarea. Roles: trad, clean, type, proof.", inline=False)
+    e.add_field(name="`cd!tomar <id_capítulo> <rol>`", value="Tomar una tarea. Roles: trad, clean, type.", inline=False)
     e.add_field(name="`cd!entregar <id_tarea>`", value="Marcar tu tarea como entregada (suma puntos).", inline=False)
     e.add_field(name="`cd!extension <id_tarea> <días> [motivo]`", value="Pedir más tiempo a los líderes.", inline=False)
     e.add_field(name="`cd!mi_perfil`", value="Tus puntos y cuota del mes.", inline=False)
@@ -140,7 +139,7 @@ async def mercado(ctx):
 async def tomar(ctx, capitulo_id: int, rol: str):
     clave = ALIAS_ROL.get(rol.lower())
     if not clave:
-        await ctx.send("Rol desconocido. Usa: trad, clean, type o proof.")
+        await ctx.send("Rol desconocido. Usa: trad, clean o type.")
         return
     t = await api.tomar(ctx.author.id, capitulo_id, clave)
     await ctx.send(f"📌 Tarea **#{t['id']}** tomada: {t['obra']} cap. {t['cap']} ({t['rol_nombre']}). {t['restante']}.")

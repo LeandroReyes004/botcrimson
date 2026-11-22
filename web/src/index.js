@@ -42,7 +42,7 @@ async function api(req, env, url) {
     if (m === "GET") return json({ necesitaSetup: n === 0 });
     if (n > 0) fallo("El panel ya está configurado", 403);
     if (String(body.password || "").length < 10) fallo("La contraseña del admin debe tener al menos 10 caracteres");
-    const id = await A.crearStaff(env, { id: null, nivel: "admin" }, { ...body, nivel: "admin", roles: "trad,clean,type,proof" });
+    const id = await A.crearStaff(env, { id: null, nivel: "admin" }, { ...body, nivel: "admin", roles: "trad,clean,type" });
     return json({ ok: true }, 200, { "set-cookie": await crearSesion(env, id) });
   }
 
