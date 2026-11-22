@@ -1,0 +1,33 @@
+name = "crimson-panel"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+# Dominio propio (va antes de cualquier [tabla] para que no quede dentro de [vars])
+routes = [{ pattern = "panel.scancrimson.com", custom_domain = true }]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "crimson-panel-db"
+database_id = "d61aa134-b79a-4612-94f6-830fa1e171f2"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "crimson-archivos"
+
+# Revisa tareas vencidas cada hora y manda el reporte diario a líderes
+[triggers]
+crons = ["0 * * * *"]
+
+[vars]
+ZONA_HORARIA = "America/Santo_Domingo"
+
+# Secretos (npx wrangler secret put NOMBRE):
+#   BOT_API_KEY          clave que usa el bot de Discord para hablar con la API
+#   DISCORD_WEBHOOK_URL  webhook del canal de avisos (tareas, extensiones, cancelaciones)
+#   DISCORD_WEBHOOK_LIDERES  webhook del canal de líderes (reporte diario)
+#   DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET  login con Discord

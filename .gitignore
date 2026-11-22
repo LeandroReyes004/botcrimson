@@ -1,3 +1,8 @@
 .env
 __pycache__/
 *.pyc
+# Nunca subir credenciales ni datos del servidor
+credenciales.json
+credentials.json
+*.pem
+database_crimson.json
