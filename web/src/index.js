@@ -4,6 +4,7 @@ import * as T from "./tareas.js";
 import * as A from "./admin.js";
 import { rutasBot } from "./bot.js";
 import { PERMISOS, leerPermisos, permisosDe, exigir, validarPermisos } from "./permisos.js";
+import { rutasDiscord, discordActivo } from "./discord.js";
 import { ejecutarCron, reporteDiario, vencerTareas } from "./cron.js";
 
 const DIAS_SESION = 7;
@@ -28,6 +29,7 @@ async function api(req, env, url) {
   const ruta = url.pathname.replace(/^\/api\//, "");
   const m = req.method;
   if (ruta.startsWith("bot/")) return rutasBot(req, env, ruta.slice(4), url);
+  if (ruta.startsWith("auth/discord") && m === "GET") return rutasDiscord(req, env, ruta, url, crearSesion);
 
   // Las escrituras solo se aceptan desde el mismo sitio (protección CSRF)
   if (m !== "GET") {
@@ -39,7 +41,7 @@ async function api(req, env, url) {
   // ---------- Configuración inicial: crear el primer admin ----------
   if (ruta === "setup") {
     const { n } = await env.DB.prepare("SELECT COUNT(*) AS n FROM staff WHERE usuario IS NOT NULL").first();
-    if (m === "GET") return json({ necesitaSetup: n === 0 });
+    if (m === "GET") return json({ necesitaSetup: n === 0, discord: discordActivo(env) });
     if (n > 0) fallo("El panel ya está configurado", 403);
     if (String(body.password || "").length < 10) fallo("La contraseña del admin debe tener al menos 10 caracteres");
     const id = await A.crearStaff(env, { id: null, nivel: "admin" }, { ...body, nivel: "admin", roles: "trad,clean,type" });

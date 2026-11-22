@@ -32,16 +32,31 @@ async function accion(fn, okMsg) {
 async function iniciar() {
   const acceso = location.hash.match(/^#acceso=([a-f0-9]{64})$/);
   if (acceso) return pantallaAcceso(acceso[1]);
+  const err = location.hash.match(/^#error=([a-z-]+)$/);
+  if (err) { history.replaceState(null, "", "/"); setTimeout(() => toast(ERRORES_LOGIN[err[1]] || "No se pudo entrar con Discord.", "error"), 50); }
   try {
-    const { necesitaSetup } = await api("setup");
+    const { necesitaSetup, discord } = await api("setup");
+    DISCORD_LOGIN = discord;
     if (necesitaSetup) return pantallaSetup();
     YO = await api("yo");
     pantallaPanel();
   } catch { if (!YO) pantallaLogin(); }
 }
 
+let DISCORD_LOGIN = false;
+const ERRORES_LOGIN = {
+  "no-registrado": "Tu cuenta de Discord no está en el staff. Pide a un líder que te añada con tu ID de Discord.",
+  desactivado: "Tu cuenta está desactivada. Habla con un líder.",
+  cancelado: "Cancelaste el inicio de sesión con Discord.",
+  estado: "El inicio de sesión caducó. Vuelve a intentarlo.",
+  discord: "Discord no respondió. Intenta otra vez en un momento.",
+  "discord-off": "El login con Discord todavía no está configurado.",
+};
+
 function pantallaLogin() {
   $("#app").innerHTML = `<div class="card login"><h2>Crimson Scan</h2>
+    ${DISCORD_LOGIN ? `<a class="boton-discord" href="/api/auth/discord">Entrar con Discord</a>
+    <p class="muted centro-txt">o con usuario y contraseña</p>` : ""}
     <form id="f"><input name="usuario" placeholder="Usuario" autocomplete="username" required>
     <input name="password" type="password" placeholder="Contraseña" autocomplete="current-password" required>
     <button>Entrar</button></form></div>`;

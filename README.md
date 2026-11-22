@@ -67,3 +67,17 @@ npm run db:local
 echo 'BOT_API_KEY=prueba' > .dev.vars
 npm run dev     # http://localhost:8787
 ```
+
+## Entrar con Discord
+
+1. En https://discord.com/developers/applications abre la app del bot (sirve la misma).
+2. En **OAuth2 → Redirects** añade: `https://panel.scancrimson.com/api/auth/discord/callback` y guarda.
+3. Copia el **Client ID** y el **Client Secret** y cárgalos como secretos:
+
+```
+cd web
+npx wrangler secret put DISCORD_CLIENT_ID
+npx wrangler secret put DISCORD_CLIENT_SECRET
+```
+
+Solo puede entrar quien ya esté en el staff con su ID de Discord. Los demás ven un aviso.
