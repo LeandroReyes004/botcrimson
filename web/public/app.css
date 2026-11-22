@@ -76,3 +76,18 @@ dialog::backdrop { background: #0008; }
 dialog form { display: flex; flex-direction: column; gap: 10px; }
 .roles-check { display: flex; gap: 10px; flex-wrap: wrap; }
 .roles-check label { display: flex; gap: 4px; align-items: center; }
+/* ---------- Resumen y fichas ---------- */
+.stat.alerta { box-shadow: inset 3px 0 0 var(--warn); } .stat.alerta b { color: var(--warn); }
+.stat.mal { box-shadow: inset 3px 0 0 var(--bad); } .stat.mal b { color: var(--bad); }
+.stat.bien { box-shadow: inset 3px 0 0 var(--ok); } .stat.bien b { color: var(--ok); }
+.stat[data-ir]:hover { filter: brightness(1.15); }
+.dos-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.dos-col > .card { margin-bottom: 0; }
+@media (max-width: 800px) { .dos-col { grid-template-columns: 1fr; } }
+.dos-col + * { margin-top: 16px; }
+.cap-card.atrasada { border-left-color: var(--bad); }
+.cap-card.persona { cursor: pointer; border-left-color: var(--ok); }
+.cap-card.persona:hover { border-color: var(--crimson); }
+.cap-card.persona.hiatus { border-left-color: var(--warn); }
+.cap-card.persona.inactivo { border-left-color: var(--line); opacity: .6; }
+code { background: var(--panel2); padding: 1px 6px; border-radius: 4px; }

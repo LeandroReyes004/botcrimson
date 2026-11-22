@@ -209,3 +209,46 @@ export async function eventos(env, limite = 100) {
     SELECT e.*, s.nombre FROM eventos e LEFT JOIN staff s ON s.id = e.staff_id ORDER BY e.id DESC LIMIT ?`).bind(limite).all();
   return results;
 }
+
+// ---------- Resumen para líderes ----------
+export async function resumen(env, inicioMes) {
+  const ahora = ahoraISO();
+  const en24 = sumarDias(ahora, 1);
+  const n = (sql, ...b) => env.DB.prepare(sql).bind(...b).first().then((r) => r.n);
+  const [activas, atrasadas, pronto, solicitudes, listos, sinEmpezar, entregasMes, vencidasMes, entregas7] = await Promise.all([
+    n("SELECT COUNT(*) AS n FROM tareas WHERE estado = 'activa'"),
+    n("SELECT COUNT(*) AS n FROM tareas WHERE estado = 'activa' AND limite < ?", ahora),
+    n("SELECT COUNT(*) AS n FROM tareas WHERE estado = 'activa' AND limite >= ? AND limite < ?", ahora, en24),
+    n("SELECT COUNT(*) AS n FROM tareas WHERE estado = 'activa' AND solicitud IS NOT NULL"),
+    n("SELECT COUNT(*) AS n FROM capitulos c JOIN proyectos p ON p.id = c.proyecto_id WHERE c.estado = 'listo' AND p.estado = 'activo'"),
+    n("SELECT COUNT(*) AS n FROM capitulos c JOIN proyectos p ON p.id = c.proyecto_id WHERE c.estado = 'pendiente' AND p.estado = 'activo'"),
+    n("SELECT COUNT(*) AS n FROM puntos WHERE motivo = 'entrega' AND fecha >= ?", inicioMes),
+    n("SELECT COUNT(*) AS n FROM puntos WHERE motivo = 'vencida' AND fecha >= ?", inicioMes),
+    n("SELECT COUNT(*) AS n FROM puntos WHERE motivo = 'entrega' AND fecha >= ?", sumarDias(ahora, -7)),
+  ]);
+  // Gente activa sin ninguna tarea (y que no está en hiatus): a quién se le puede pedir ayuda
+  const { results: libres } = await env.DB.prepare(`
+    SELECT s.id, s.nombre, s.roles,
+      (SELECT MAX(cerrada) FROM tareas t WHERE t.staff_id = s.id AND t.estado = 'entregada') AS ultima_entrega
+    FROM staff s WHERE s.activo = 1 AND (s.hiatus_hasta IS NULL OR s.hiatus_hasta < ?) AND s.roles != ''
+      AND NOT EXISTS (SELECT 1 FROM tareas t WHERE t.staff_id = s.id AND t.estado = 'activa')
+    ORDER BY ultima_entrega IS NULL DESC, ultima_entrega`).bind(ahora).all();
+  const { results: hiatus } = await env.DB.prepare(
+    "SELECT id, nombre, hiatus_hasta FROM staff WHERE activo = 1 AND hiatus_hasta > ? ORDER BY hiatus_hasta").bind(ahora).all();
+  const { results: listosLista } = await env.DB.prepare(`
+    SELECT c.id, c.numero, p.nombre AS obra FROM capitulos c JOIN proyectos p ON p.id = c.proyecto_id
+    WHERE c.estado = 'listo' AND p.estado = 'activo' ORDER BY p.nombre COLLATE NOCASE, c.orden LIMIT 30`).all();
+  return { activas, atrasadas, pronto, solicitudes, listos, sinEmpezar, entregasMes, vencidasMes, entregas7, libres, hiatus, listosLista };
+}
+
+// ---------- Ajuste manual de puntos (bono o penalización con motivo) ----------
+export async function ajustarPuntos(env, actor, staffId, puntos, nota) {
+  const s = await env.DB.prepare("SELECT id, nombre, discord_id FROM staff WHERE id = ?").bind(staffId).first();
+  if (!s) fallo("Miembro no encontrado", 404);
+  if (!Number.isInteger(puntos) || puntos === 0 || Math.abs(puntos) > 50) fallo("Los puntos deben ser un número entre -50 y 50 (sin 0)");
+  const motivo = texto(nota, "el motivo", 200);
+  await env.DB.prepare("INSERT INTO puntos (staff_id, puntos, motivo, nota, autor_id) VALUES (?, ?, 'ajuste', ?, ?)")
+    .bind(s.id, puntos, motivo, actor.id).run();
+  await registrar(env, actor.id, "puntos_ajustados", { staff: s.id, puntos, motivo });
+  await avisar(env, `${puntos > 0 ? "🎁" : "⚠️"} ${mencion(s)} ${puntos > 0 ? "recibió" : "perdió"} **${Math.abs(puntos)} pts**: ${motivo}`);
+}

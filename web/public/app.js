@@ -86,11 +86,12 @@ function pantallaSetup() {
 const lider = () => YO && (YO.nivel === "admin" || YO.nivel === "lider");
 const PESTANAS = () => [
   ["mercado", "Mercado"], ["mis", "Mis tareas"], ["ranking", "Ranking"], ["perfil", "Mi perfil"],
-  ...(lider() ? [["|"], ["control", "Control de tareas"], ["proyectos", "Proyectos"], ["staff", "Staff"], ["actividad", "Actividad"]] : []),
+  ...(lider() ? [["|"], ["resumen", "Resumen"], ["control", "Control de tareas"], ["proyectos", "Proyectos"], ["staff", "Staff"], ["actividad", "Actividad"]] : []),
   ...(YO?.nivel === "admin" ? [["config", "Ajustes"]] : []),
 ];
 
 function pantallaPanel() {
+  VISTA = lider() ? "resumen" : "mercado";
   $("#app").innerHTML = `<header><h1>Crimson Scan</h1>
       <div class="fila"><span class="muted">${esc(YO.nombre)} · ${NIVEL[YO.nivel]}</span><button class="sec mini" id="salir">Salir</button></div></header>
     <nav id="nav"></nav><main id="main"></main>`;
@@ -100,7 +101,7 @@ function pantallaPanel() {
 
 async function render() {
   if (!YO) return;
-  $("#nav").innerHTML = PESTANAS().map(([k, n]) => k === "|" ? '<span class="sep"></span>' : `<button data-v="${k}" class="${k === VISTA ? "on" : ""}">${n}</button>`).join("");
+  $("#nav").innerHTML = PESTANAS().map(([k, n]) => k === "|" ? '<span class="sep"></span>' : `<button data-v="${k}" class="${k === VISTA || (k === "staff" && VISTA === "ficha") ? "on" : ""}">${n}</button>`).join("");
   $("#nav").querySelectorAll("button").forEach((b) => (b.onclick = () => { VISTA = b.dataset.v; render(); }));
   const main = $("#main");
   try { await (VISTAS[VISTA] || VISTAS.mercado)(main); }
@@ -167,17 +168,10 @@ const VISTAS = {
   async mis(main) {
     const ts = await api("mis-tareas?todas=1");
     const act = ts.filter((t) => t.estado === "activa"), otras = ts.filter((t) => t.estado !== "activa");
-    main.innerHTML = `<div class="card"><h2>Mis tareas activas</h2>${act.length ? `<div class="tabla"><table>
-      <tr><th>Obra</th><th>Cap.</th><th>Rol</th><th>Vence</th><th>Tiempo</th><th></th></tr>
-      ${act.map((t) => `<tr><td>${esc(t.obra)}</td><td>${esc(t.cap)}</td><td>${t.rol_nombre}</td><td>${fecha(t.limite)}</td><td>${chipEstadoTarea(t)}</td>
-        <td class="fila">${t.solicitud ? `<span class="chip">Pediste ${t.solicitud === "extension" ? `+${t.solicitud_dias} días` : "cancelar"}</span>` : `
-          <button class="ok mini" data-entregar="${t.id}">Entregar</button>
-          <button class="sec mini" data-ext="${t.id}">Pedir más tiempo</button>
-          <button class="sec mini" data-cancel="${t.id}">Pedir cancelar</button>`}</td></tr>`).join("")}
-      </table></div>` : '<p class="muted">No tienes tareas activas. Pasa por el mercado.</p>'}</div>
-      <div class="card"><h2>Historial</h2>${otras.length ? `<div class="tabla"><table><tr><th>Obra</th><th>Cap.</th><th>Rol</th><th>Estado</th><th>Cerrada</th></tr>
-      ${otras.map((t) => `<tr><td>${esc(t.obra)}</td><td>${esc(t.cap)}</td><td>${t.rol_nombre}</td><td>${chipEstadoTarea(t)}</td><td>${fecha(t.cerrada)}</td></tr>`).join("")}
-      </table></div>` : '<p class="muted">Todavía nada.</p>'}</div>`;
+    main.innerHTML = `<div class="card"><h2>Mis tareas activas (${act.length})</h2>
+      ${act.length ? `<div class="caps-grid">${act.map((t) => tarjetaTarea(t, "propia")).join("")}</div>`
+        : '<p class="muted">No tienes tareas activas. Pasa por el mercado.</p>'}</div>
+      <div class="card"><h2>Historial</h2>${tablaHistorial(otras)}</div>`;
     main.querySelectorAll("[data-entregar]").forEach((b) => (b.onclick = () => {
       if (confirm("¿Confirmas que entregaste esta tarea?")) accion(() => post(`tareas/${b.dataset.entregar}/entregar`), "¡Entregada! +puntos");
     }));
@@ -203,16 +197,64 @@ const VISTAS = {
 
   async perfil(main) {
     const p = await api("perfil");
-    main.innerHTML = `<div class="card"><h2>${esc(p.nombre)}</h2>
-      <p class="muted">${NIVEL[p.nivel]} · Roles: ${p.roles ? p.roles.split(",").map((r) => ROL[r]).join(", ") : "ninguno"}${p.hiatus_hasta && new Date(p.hiatus_hasta) > new Date() ? ` · En hiatus hasta ${fecha(p.hiatus_hasta)}` : ""}</p>
-      <div class="stats"><div class="stat"><span class="muted">Puntos del mes</span><b>${p.puntos_mes}</b></div>
-      <div class="stat"><span class="muted">Entregas del mes</span><b>${p.entregas_mes} / ${p.cuota}</b></div>
-      <div class="stat"><span class="muted">Entregas totales</span><b>${p.entregas_total}</b></div>
-      <div class="stat"><span class="muted">Cuota</span><b>${p.cumple_cuota ? "✅ Cumplida" : `Faltan ${p.cuota - p.entregas_mes}`}</b></div></div></div>
+    main.innerHTML = fichaHTML(p, false) + `
       <div class="card"><h2>Cambiar contraseña</h2><form id="pw" class="fila">
       <input name="actual" type="password" placeholder="Contraseña actual" required>
-      <input name="nueva" type="password" placeholder="Nueva (mín. 8)" minlength="8" required><button>Cambiar</button></form></div>`;
+      <input name="nueva" type="password" placeholder="Nueva (mín. 8)" minlength="8" required><button>Cambiar</button></form>
+      <p class="muted">¿La olvidaste? Escribe <code>cd!acceso</code> en Discord y el bot te manda un enlace.</p></div>`;
     $("#pw").onsubmit = (e) => { e.preventDefault(); accion(() => post("yo/password", Object.fromEntries(new FormData(e.target))), "Contraseña cambiada"); };
+  },
+
+  async resumen(main) {
+    const r = await api("admin/resumen");
+    const stat = (n, txt, clase = "", ir = "") => `<div class="stat ${clase}" ${ir ? `data-ir="${ir}" style="cursor:pointer"` : ""}><span class="muted">${txt}</span><b>${n}</b></div>`;
+    main.innerHTML = `<div class="card"><h2>Resumen</h2><div class="stats">
+        ${stat(r.solicitudes, "Solicitudes por revisar", r.solicitudes ? "alerta" : "", "control")}
+        ${stat(r.atrasadas, "Tareas atrasadas", r.atrasadas ? "mal" : "", "control")}
+        ${stat(r.pronto, "Vencen en menos de 24 h", r.pronto ? "alerta" : "", "control")}
+        ${stat(r.activas, "Tareas activas", "", "control")}
+        ${stat(r.listos, "Capítulos listos para publicar", r.listos ? "bien" : "", "proyectos")}
+        ${stat(r.sinEmpezar, "Capítulos sin empezar", "", "mercado")}
+        ${stat(r.entregas7, "Entregas últimos 7 días")}
+        ${stat(`${r.entregasMes} / ${r.vencidasMes}`, "Entregadas / vencidas este mes")}
+      </div></div>
+      <div class="dos-col">
+        <div class="card"><h2>Disponibles sin tareas (${r.libres.length})</h2>
+          ${r.libres.length ? `<div class="tabla"><table><tr><th>Nombre</th><th>Roles</th><th>Última entrega</th></tr>
+          ${r.libres.map((s) => `<tr><td><a href="#" data-ficha="${s.id}">${esc(s.nombre)}</a></td><td>${chipsRoles(s.roles)}</td>
+            <td class="muted">${s.ultima_entrega ? hace(s.ultima_entrega) : "Nunca"}</td></tr>`).join("")}</table></div>`
+          : '<p class="muted">Todo el staff activo tiene trabajo.</p>'}</div>
+        <div class="card"><h2>Listos para publicar (${r.listosLista.length})</h2>
+          ${r.listosLista.length ? r.listosLista.map((c) => `<div class="rol-fila"><span>${esc(c.obra)} · cap. ${esc(c.numero)}</span>
+            <button class="ok mini" data-publicar="${c.id}">Marcar publicado</button></div>`).join("") : '<p class="muted">Nada pendiente de publicar.</p>'}
+          ${r.hiatus.length ? `<h3>En hiatus</h3>${r.hiatus.map((s) => `<div class="rol-fila"><a href="#" data-ficha="${s.id}">${esc(s.nombre)}</a><span class="muted">hasta ${fecha(s.hiatus_hasta)}</span></div>`).join("")}` : ""}
+        </div>
+      </div>`;
+    main.querySelectorAll("[data-ir]").forEach((d) => (d.onclick = () => { VISTA = d.dataset.ir; render(); }));
+    main.querySelectorAll("[data-ficha]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); abrirFicha(Number(a.dataset.ficha)); }));
+    main.querySelectorAll("[data-publicar]").forEach((b) => (b.onclick = () =>
+      accion(() => post(`admin/capitulos/${b.dataset.publicar}`, { estado: "publicado" }, "PATCH"), "¡Publicado! Se avisó en Discord")));
+  },
+
+  async ficha(main) {
+    const id = VISTAS.ficha.id;
+    if (!id) { VISTA = "staff"; return render(); }
+    const p = await api(`admin/staff/${id}`);
+    main.innerHTML = `<p><a href="#" id="volver">← Volver al staff</a></p>` + fichaHTML(p, true) +
+      `<div class="card"><h2>Historial de tareas</h2>${tablaHistorial(p.historial.filter((t) => t.estado !== "activa"))}</div>`;
+    $("#volver").onclick = (e) => { e.preventDefault(); VISTA = "staff"; render(); };
+    $("#editar").onclick = () => editarPersona(p);
+    $("#puntos").onclick = () => dialogo(`Ajustar puntos de ${p.nombre}`, `
+      <label>Puntos (positivo = bono, negativo = penalización) <input name="puntos" type="number" min="-50" max="50" required></label>
+      <label>Motivo <input name="nota" maxlength="200" placeholder="Ej: ayudó con un cap urgente" required></label>`,
+      (d) => post(`admin/staff/${p.id}/puntos`, { puntos: Number(d.puntos), nota: d.nota }), "Puntos ajustados");
+    $("#hiatus").onclick = () => dialogo(`Hiatus de ${p.nombre}`, `
+      <label>Días de hiatus (0 = quitar) <input name="dias" type="number" min="0" max="365" value="${enHiatus(p) ? 0 : 7}" required></label>
+      <p class="muted">En hiatus no puede tomar tareas nuevas. Sus tareas actuales siguen igual.</p>`,
+      (d) => post(`admin/staff/${p.id}`, { hiatus_dias: Number(d.dias) }, "PATCH"), "Hiatus actualizado");
+    main.querySelectorAll("[data-quitar]").forEach((b) => (b.onclick = () => {
+      if (confirm("¿Quitar esta tarea? Vuelve al mercado sin restar puntos.")) accion(() => post(`admin/tareas/${b.dataset.quitar}/quitar`), "Tarea liberada");
+    }));
   },
 
   async control(main) {
@@ -254,34 +296,31 @@ const VISTAS = {
 
   async staff(main) {
     const gente = await api("admin/staff");
-    main.innerHTML = `<div class="card"><div class="fila" style="justify-content:space-between"><h2>Staff (${gente.filter((g) => g.activo).length} activos)</h2>
+    const filtro = VISTAS.staff.filtro || "activos";
+    const busca = (VISTAS.staff.busca || "").toLowerCase();
+    const estado = (g) => !g.activo ? "inactivo" : enHiatus(g) ? "hiatus" : "activo";
+    const lista = gente.filter((g) => (filtro === "todos" || estado(g) === filtro.replace(/s$/, ""))
+      && (!busca || `${g.nombre} ${g.usuario || ""} ${g.discord_id || ""}`.toLowerCase().includes(busca)));
+    const cuenta = (f) => gente.filter((g) => f === "todos" || estado(g) === f.replace(/s$/, "")).length;
+    main.innerHTML = `<div class="card"><div class="fila" style="justify-content:space-between"><h2>Staff</h2>
       <button id="nuevo">Añadir miembro</button></div>
-      <div class="tabla"><table><tr><th>Nombre</th><th>Usuario</th><th>Discord</th><th>Nivel</th><th>Roles</th><th>Activas</th><th>Estado</th><th></th></tr>
-      ${gente.map((g) => `<tr style="${g.activo ? "" : "opacity:.5"}"><td>${esc(g.nombre)}</td><td>${esc(g.usuario || "—")}</td><td class="muted">${esc(g.discord_id || "—")}</td>
-        <td>${NIVEL[g.nivel]}</td><td>${g.roles ? g.roles.split(",").map((r) => `<span class="chip">${ROL[r]}</span>`).join(" ") : "—"}</td><td>${g.activas}</td>
-        <td>${!g.activo ? "Inactivo" : g.hiatus_hasta && new Date(g.hiatus_hasta) > new Date() ? `Hiatus hasta ${fecha(g.hiatus_hasta)}` : "Activo"}</td>
-        <td><button class="sec mini" data-edit="${g.id}">Editar</button></td></tr>`).join("")}</table></div></div>`;
-    const form = (g = {}) => `
-      <input name="nombre" placeholder="Nombre" value="${esc(g.nombre)}" required>
-      <input name="usuario" placeholder="Usuario del panel (opcional)" value="${esc(g.usuario)}">
-      <input name="password" type="password" placeholder="${g.id ? "Nueva contraseña (dejar vacío para no cambiar)" : "Contraseña (mín. 8)"}" minlength="8">
-      <input name="discord_id" placeholder="ID de Discord" value="${esc(g.discord_id)}">
-      ${YO.nivel === "admin" ? `<select name="nivel">${Object.entries(NIVEL).map(([k, n]) => `<option value="${k}" ${(g.nivel || "staff") === k ? "selected" : ""}>${n}</option>`).join("")}</select>` : ""}
-      <div class="roles-check">${ROLES.map((r) => `<label><input type="checkbox" name="rol_${r}" ${(g.roles || "").split(",").includes(r) ? "checked" : ""}> ${ROL[r]}</label>`).join("")}</div>
-      ${g.id ? `<label>Hiatus (días, 0 = quitar) <input name="hiatus_dias" type="number" min="0" max="365" placeholder="Sin cambios"></label>
-      <label><input type="checkbox" name="activo" ${g.activo ? "checked" : ""}> Activo</label>` : ""}`;
-    const datos = (d, g) => {
-      const b = { nombre: d.nombre, usuario: d.usuario || null, discord_id: d.discord_id || null, roles: ROLES.filter((r) => d["rol_" + r]).join(",") };
-      if (d.password) b.password = d.password;
-      if (d.nivel) b.nivel = d.nivel;
-      if (g) { b.activo = !!d.activo; if (d.hiatus_dias !== "") b.hiatus_dias = Number(d.hiatus_dias); if (g.nivel === d.nivel) delete b.nivel; }
-      return b;
+      <div class="fila" style="margin-bottom:10px"><input id="busca" placeholder="Buscar por nombre, usuario o ID de Discord" value="${esc(VISTAS.staff.busca || "")}"></div>
+      <div class="filtros">${[["activos", "Activos"], ["hiatus", "En hiatus"], ["inactivos", "Inactivos"], ["todos", "Todos"]]
+        .map(([k, n]) => `<button data-filtro="${k}" class="${filtro === k ? "on" : ""}">${n} (${cuenta(k)})</button>`).join("")}</div>
+      <div class="caps-grid">${lista.map((g) => `<div class="cap-card persona ${estado(g)}" data-ficha="${g.id}">
+        <div class="cap-head"><b>${esc(g.nombre)}</b><span class="chip">${NIVEL[g.nivel]}</span></div>
+        <div class="muted">${g.usuario ? "@" + esc(g.usuario) : "Sin usuario del panel"}${g.discord_id ? " · Discord vinculado" : " · <span style='color:var(--warn)'>Sin Discord</span>"}</div>
+        <div style="margin:8px 0">${chipsRoles(g.roles) || '<span class="muted">Sin roles</span>'}</div>
+        <div class="rol-fila"><span>${g.activas} tarea(s) activa(s)</span><span class="muted">${estado(g) === "hiatus" ? `Hiatus hasta ${fecha(g.hiatus_hasta)}` : estado(g) === "inactivo" ? "Inactivo" : "Activo"}</span></div>
+      </div>`).join("") || '<p class="muted">Nadie con ese filtro.</p>'}</div></div>`;
+    $("#busca").oninput = (e) => {
+      VISTAS.staff.busca = e.target.value;
+      clearTimeout(VISTAS.staff.t);
+      VISTAS.staff.t = setTimeout(async () => { await VISTAS.staff(main); const i = $("#busca"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250);
     };
-    $("#nuevo").onclick = () => dialogo("Añadir miembro", form(), (d) => post("admin/staff", datos(d)), "Miembro añadido");
-    main.querySelectorAll("[data-edit]").forEach((b) => (b.onclick = () => {
-      const g = gente.find((x) => x.id === Number(b.dataset.edit));
-      dialogo(`Editar a ${g.nombre}`, form(g), (d) => post(`admin/staff/${g.id}`, datos(d, g), "PATCH"), "Cambios guardados");
-    }));
+    main.querySelectorAll("[data-filtro]").forEach((b) => (b.onclick = () => { VISTAS.staff.filtro = b.dataset.filtro; VISTAS.staff(main); }));
+    main.querySelectorAll("[data-ficha]").forEach((c) => (c.onclick = () => abrirFicha(Number(c.dataset.ficha))));
+    $("#nuevo").onclick = () => dialogo("Añadir miembro", formPersona(), (d) => post("admin/staff", datosPersona(d)), "Miembro añadido");
   },
 
   async actividad(main) {
@@ -335,6 +374,86 @@ async function capitulos(el, p) {
       <label>Días para entregar <input name="dias" type="number" min="1" max="60" placeholder="${esc(YO.config.dias_limite)}"></label>`,
       (d) => post("admin/asignar", { capitulo_id: Number(b.dataset.asig), rol: b.dataset.rol, staff_id: Number(d.staff_id), dias: d.dias ? Number(d.dias) : undefined }), "Tarea asignada");
   }));
+}
+
+// ---------- Piezas compartidas: personas y tareas ----------
+const enHiatus = (g) => g.hiatus_hasta && new Date(g.hiatus_hasta) > new Date();
+const chipsRoles = (roles) => (roles || "").split(",").filter((r) => ROL[r]).map((r) => `<span class="chip">${ROL[r]}</span>`).join(" ");
+const hace = (iso) => {
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  return d <= 0 ? "Hoy" : d === 1 ? "Ayer" : `Hace ${d} días`;
+};
+const MOTIVO = { entrega: "Entrega", vencida: "Tarea vencida", ajuste: "Ajuste", migrado: "Puntos del sistema viejo" };
+
+function tarjetaTarea(t, modo) {
+  const atrasada = t.restante?.startsWith("atrasada");
+  return `<div class="cap-card ${atrasada ? "atrasada" : "en_proceso"}">
+    <div class="cap-head"><b>${esc(t.obra)} · cap. ${esc(t.cap)}</b><span class="chip">${t.rol_nombre}</span></div>
+    <div class="rol-fila"><span class="muted">Vence</span><span>${fecha(t.limite)}</span></div>
+    <div class="rol-fila"><span class="muted">Tiempo</span>${chipEstadoTarea(t)}</div>
+    ${t.solicitud ? `<div class="rol-fila"><span class="muted">Solicitud</span><span class="chip activa">${t.solicitud === "extension" ? `+${t.solicitud_dias} días` : "Cancelar"}: esperando a un líder</span></div>` : ""}
+    <div class="fila" style="margin-top:10px">${modo === "propia" ? `<button class="ok mini" data-entregar="${t.id}">Entregar</button>` + (t.solicitud ? "" : `
+      <button class="sec mini" data-ext="${t.id}">Pedir más tiempo</button>
+      <button class="sec mini" data-cancel="${t.id}">Pedir cancelar</button>`) : modo === "lider" ? `<button class="sec mini" data-quitar="${t.id}">Quitar tarea</button>` : ""}</div>
+  </div>`;
+}
+
+function tablaHistorial(lista) {
+  if (!lista.length) return '<p class="muted">Todavía nada.</p>';
+  return `<div class="tabla"><table><tr><th>Obra</th><th>Cap.</th><th>Rol</th><th>Resultado</th><th>Cerrada</th></tr>
+    ${lista.map((t) => `<tr><td>${esc(t.obra)}</td><td>${esc(t.cap)}</td><td>${t.rol_nombre}</td>
+      <td>${t.estado === "entregada" ? `<span class="chip entregada">${t.cerrada <= t.limite ? "A tiempo" : "Con retraso"}</span>` : chipEstadoTarea(t)}</td>
+      <td class="muted">${fecha(t.cerrada)}</td></tr>`).join("")}</table></div>`;
+}
+
+// Ficha de una persona: la usa "Mi perfil" y la vista de líderes
+function fichaHTML(p, admin) {
+  const estado = !p.activo ? "Inactivo" : enHiatus(p) ? `En hiatus hasta ${fecha(p.hiatus_hasta)}` : "Activo";
+  return `<div class="card"><div class="fila" style="justify-content:space-between">
+      <div><h2 style="margin-bottom:4px">${esc(p.nombre)}</h2>
+      <div class="muted">${NIVEL[p.nivel]} · ${estado}${p.usuario ? ` · @${esc(p.usuario)}` : ""}${p.creado ? ` · En el equipo desde ${new Date(p.creado).toLocaleDateString("es-DO", { month: "long", year: "numeric" })}` : ""}</div>
+      <div style="margin-top:6px">${chipsRoles(p.roles) || '<span class="muted">Sin roles asignados</span>'}</div></div>
+      ${admin ? `<div class="fila"><button class="sec mini" id="editar">Editar</button><button class="sec mini" id="hiatus">Hiatus</button><button class="mini" id="puntos">Ajustar puntos</button></div>` : ""}
+    </div>
+    <div class="stats" style="margin-top:14px">
+      <div class="stat"><span class="muted">Puntos del mes</span><b>${p.puntos_mes}</b></div>
+      <div class="stat ${p.cumple_cuota ? "bien" : ""}"><span class="muted">Cuota del mes</span><b>${p.entregas_mes} / ${p.cuota}</b></div>
+      <div class="stat"><span class="muted">Entregas totales</span><b>${p.entregas_total}</b></div>
+      <div class="stat ${p.vencidas_total ? "mal" : ""}"><span class="muted">Vencidas</span><b>${p.vencidas_total}</b></div>
+      <div class="stat"><span class="muted">Puntualidad</span><b>${p.puntualidad === null ? "—" : p.puntualidad + "%"}</b></div>
+      <div class="stat"><span class="muted">Puntos totales</span><b>${p.puntos_total}</b></div>
+    </div></div>
+    <div class="card"><h2>${admin ? "Tareas activas" : "Lo que tienes ahora"} (${p.activas.length})</h2>
+      ${p.activas.length ? `<div class="caps-grid">${p.activas.map((t) => tarjetaTarea(t, admin ? "lider" : "ver")).join("")}</div>` : '<p class="muted">Sin tareas activas.</p>'}</div>
+    <div class="card"><h2>Movimientos de puntos</h2>
+      ${p.movimientos.length ? `<div class="tabla"><table><tr><th>Fecha</th><th>Puntos</th><th>Motivo</th></tr>
+      ${p.movimientos.map((m) => `<tr><td class="muted">${fecha(m.fecha)}</td>
+        <td><b style="color:${m.puntos > 0 ? "var(--ok)" : "var(--bad)"}">${m.puntos > 0 ? "+" : ""}${m.puntos}</b></td>
+        <td>${MOTIVO[m.motivo] || esc(m.motivo)}${m.obra ? `: ${esc(m.obra)} cap. ${esc(m.cap)} (${m.rol_nombre})` : ""}${m.nota ? `: ${esc(m.nota)}` : ""}${m.autor ? ` <span class="muted">· por ${esc(m.autor)}</span>` : ""}</td></tr>`).join("")}
+      </table></div>` : '<p class="muted">Todavía no hay puntos.</p>'}</div>`;
+}
+
+function abrirFicha(id) { VISTAS.ficha.id = id; VISTA = "ficha"; render(); }
+
+function formPersona(g = {}) {
+  return `
+    <input name="nombre" placeholder="Nombre" value="${esc(g.nombre)}" required>
+    <input name="usuario" placeholder="Usuario del panel (opcional)" value="${esc(g.usuario)}">
+    <input name="password" type="password" placeholder="${g.id ? "Nueva contraseña (dejar vacío para no cambiar)" : "Contraseña (o que use cd!acceso)"}" minlength="8">
+    <input name="discord_id" placeholder="ID de Discord (clic derecho > Copiar ID)" value="${esc(g.discord_id)}">
+    ${YO.nivel === "admin" ? `<select name="nivel">${Object.entries(NIVEL).map(([k, n]) => `<option value="${k}" ${(g.nivel || "staff") === k ? "selected" : ""}>${n}</option>`).join("")}</select>` : ""}
+    <div class="roles-check">${ROLES.map((r) => `<label><input type="checkbox" name="rol_${r}" ${(g.roles || "").split(",").includes(r) ? "checked" : ""}> ${ROL[r]}</label>`).join("")}</div>
+    ${g.id ? `<label><input type="checkbox" name="activo" ${g.activo ? "checked" : ""}> Activo (si lo desactivas, sus tareas vuelven al mercado)</label>` : ""}`;
+}
+function datosPersona(d, g) {
+  const b = { nombre: d.nombre, usuario: d.usuario || null, discord_id: d.discord_id || null, roles: ROLES.filter((r) => d["rol_" + r]).join(",") };
+  if (d.password) b.password = d.password;
+  if (d.nivel && (!g || g.nivel !== d.nivel)) b.nivel = d.nivel;
+  if (g) b.activo = !!d.activo;
+  return b;
+}
+function editarPersona(p) {
+  dialogo(`Editar a ${p.nombre}`, formPersona(p), (d) => post(`admin/staff/${p.id}`, datosPersona(d, p), "PATCH"), "Cambios guardados");
 }
 
 function dialogo(titulo, html, enviar, okMsg) {

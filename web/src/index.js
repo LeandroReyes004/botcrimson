@@ -1,5 +1,5 @@
 // Crimson Scan: panel de gestión en Cloudflare Workers + D1 (+ R2 para subidas en la siguiente fase)
-import { ApiError, fallo, json, texto, entero, hashPassword, verificarPassword, tokenAleatorio, ahoraISO, sumarDias, config, registrar } from "./util.js";
+import { ApiError, fallo, json, texto, entero, hashPassword, verificarPassword, tokenAleatorio, ahoraISO, sumarDias, config, registrar, inicioMesISO } from "./util.js";
 import * as T from "./tareas.js";
 import * as A from "./admin.js";
 import { rutasBot } from "./bot.js";
@@ -126,6 +126,14 @@ async function api(req, env, url) {
   if (ruta === "admin/staff" && m === "POST") return json({ id: await A.crearStaff(env, yo, body) });
   r = ruta.match(/^admin\/staff\/(\d+)$/);
   if (r && m === "PATCH") { await A.editarStaff(env, yo, Number(r[1]), body); return json({ ok: true }); }
+  if (r && m === "GET") {
+    const s = await env.DB.prepare("SELECT * FROM staff WHERE id = ?").bind(Number(r[1])).first();
+    if (!s) fallo("Miembro no encontrado", 404);
+    return json({ ...(await T.perfil(env, s)), historial: await T.tareasDe(env, s.id, false) });
+  }
+  r = ruta.match(/^admin\/staff\/(\d+)\/puntos$/);
+  if (r && m === "POST") { await A.ajustarPuntos(env, yo, Number(r[1]), Number(body.puntos), body.nota); return json({ ok: true }); }
+  if (ruta === "admin/resumen") return json(await A.resumen(env, inicioMesISO(env.ZONA_HORARIA || "America/Santo_Domingo")));
 
   if (ruta === "admin/proyectos" && m === "GET") return json(await A.listarProyectos(env));
   if (ruta === "admin/proyectos" && m === "POST") return json({ id: await A.crearProyecto(env, yo, body) });

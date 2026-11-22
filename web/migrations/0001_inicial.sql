@@ -75,7 +75,9 @@ CREATE TABLE puntos (
   staff_id INTEGER NOT NULL REFERENCES staff(id),
   tarea_id INTEGER REFERENCES tareas(id) ON DELETE SET NULL,
   puntos   INTEGER NOT NULL,
-  motivo   TEXT NOT NULL,
+  motivo   TEXT NOT NULL,                  -- entrega, vencida, ajuste, migrado
+  nota     TEXT,                           -- explicación en ajustes manuales
+  autor_id INTEGER REFERENCES staff(id),   -- quién hizo el ajuste
   fecha    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX idx_puntos_fecha ON puntos(fecha, staff_id);

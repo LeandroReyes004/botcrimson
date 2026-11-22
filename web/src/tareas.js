@@ -210,12 +210,28 @@ export async function perfil(env, staff) {
   const mes = await env.DB.prepare(`
     SELECT COALESCE(SUM(puntos),0) AS puntos, COUNT(CASE WHEN motivo='entrega' THEN 1 END) AS entregas
     FROM puntos WHERE staff_id = ? AND fecha >= ?`).bind(staff.id, desde).first();
-  const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM tareas WHERE staff_id = ? AND estado = 'entregada'`).bind(staff.id).first();
+  const total = await env.DB.prepare(`
+    SELECT COUNT(CASE WHEN estado='entregada' THEN 1 END) AS entregadas,
+           COUNT(CASE WHEN estado='vencida' THEN 1 END) AS vencidas,
+           COUNT(CASE WHEN estado='entregada' AND cerrada <= limite THEN 1 END) AS a_tiempo,
+           COALESCE((SELECT SUM(puntos) FROM puntos WHERE staff_id = ?), 0) AS puntos_total
+    FROM tareas WHERE staff_id = ?`).bind(staff.id, staff.id).first();
+  const { results: movimientos } = await env.DB.prepare(`
+    SELECT p.puntos, p.motivo, p.nota, p.fecha, c.numero AS cap, pr.nombre AS obra, t.rol, a.nombre AS autor
+    FROM puntos p LEFT JOIN tareas t ON t.id = p.tarea_id LEFT JOIN capitulos c ON c.id = t.capitulo_id
+    LEFT JOIN proyectos pr ON pr.id = c.proyecto_id LEFT JOIN staff a ON a.id = p.autor_id
+    WHERE p.staff_id = ? ORDER BY p.id DESC LIMIT 30`).bind(staff.id).all();
   const cuota = Number(cfg.cuota_mensual || 3);
+  const cerradas = total.entregadas + total.vencidas;
   return {
-    id: staff.id, nombre: staff.nombre, discord_id: staff.discord_id, nivel: staff.nivel, roles: staff.roles,
-    hiatus_hasta: staff.hiatus_hasta, puntos_mes: mes.puntos, entregas_mes: mes.entregas,
-    entregas_total: total.n, cuota, cumple_cuota: mes.entregas >= cuota,
+    id: staff.id, nombre: staff.nombre, usuario: staff.usuario, discord_id: staff.discord_id, nivel: staff.nivel, roles: staff.roles,
+    activo: staff.activo, hiatus_hasta: staff.hiatus_hasta, creado: staff.creado,
+    puntos_mes: mes.puntos, entregas_mes: mes.entregas, puntos_total: total.puntos_total,
+    entregas_total: total.entregadas, vencidas_total: total.vencidas,
+    // Porcentaje de tareas entregadas antes del límite (sobre las que ya se cerraron)
+    puntualidad: cerradas ? Math.round((total.a_tiempo / cerradas) * 100) : null,
+    cuota, cumple_cuota: mes.entregas >= cuota,
     activas: await tareasDe(env, staff.id),
+    movimientos: movimientos.map((m) => ({ ...m, rol_nombre: m.rol ? ROL_NOMBRE[m.rol] : null })),
   };
 }
