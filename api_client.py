@@ -59,20 +59,8 @@ class PanelAPI:
     async def mercado(self, discord_id=None):
         return await self._llamar("GET", "mercado", {"discord_id": str(discord_id)} if discord_id else None)
 
-    # ---- Acciones ----
-    async def tomar(self, discord_id, capitulo_id, rol):
-        return await self._llamar("POST", "tomar", datos={"discord_id": str(discord_id), "capitulo_id": capitulo_id, "rol": rol})
-
-    async def entregar(self, discord_id, tarea_id):
-        return await self._llamar("POST", "entregar", datos={"discord_id": str(discord_id), "tarea_id": tarea_id})
-
-    async def subir(self, discord_id, tarea_id, nombre, contenido: bytes):
-        """Sube un archivo (adjunto de Discord) como trabajo de la tarea."""
-        return await self._llamar("PUT", "subir", {"discord_id": str(discord_id), "tarea_id": str(tarea_id), "nombre": nombre}, crudo=contenido)
-
-    async def solicitar(self, discord_id, tarea_id, tipo, dias=None, motivo=None):
-        return await self._llamar("POST", "solicitar", datos={
-            "discord_id": str(discord_id), "tarea_id": tarea_id, "tipo": tipo, "dias": dias, "motivo": motivo})
+    async def faltan_raws(self, pide):
+        return await self._llamar("GET", "faltan-raws", {"pide": str(pide)})
 
     async def enlace_acceso(self, discord_id):
         return await self._llamar("POST", "enlace-acceso", datos={"discord_id": str(discord_id)})

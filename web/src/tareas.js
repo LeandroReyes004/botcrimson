@@ -6,7 +6,8 @@ import {
 
 const SELECT_TAREA = `
   SELECT t.*, c.numero AS cap, c.proyecto_id, p.nombre AS obra,
-         s.nombre AS staff_nombre, s.discord_id
+         s.nombre AS staff_nombre, s.discord_id,
+         (SELECT COUNT(*) FROM archivos a WHERE a.capitulo_id = t.capitulo_id AND a.etapa = 'raw') AS raws
   FROM tareas t
   JOIN capitulos c ON c.id = t.capitulo_id
   JOIN proyectos p ON p.id = c.proyecto_id
@@ -253,4 +254,16 @@ export function filtrarMercado(caps, puedo) {
 export function filtrarRanking(filas, miId, puedo) {
   if (puedo.ver_puntos_otros) return filas;
   return filas.map((f) => (f.id === miId ? f : { id: f.id, nombre: f.nombre, oculto: true }));
+}
+
+// Capítulos de proyectos activos que todavía no tienen RAW subida al panel
+export async function faltanRaws(env) {
+  const { results } = await env.DB.prepare(`
+    SELECT p.nombre AS obra, c.numero FROM capitulos c JOIN proyectos p ON p.id = c.proyecto_id
+    WHERE p.estado = 'activo' AND c.estado IN ('pendiente','en_proceso')
+      AND NOT EXISTS (SELECT 1 FROM archivos a WHERE a.capitulo_id = c.id AND a.etapa = 'raw')
+    ORDER BY p.nombre COLLATE NOCASE, c.orden`).all();
+  const por = {};
+  for (const r of results) (por[r.obra] ??= []).push(r.numero);
+  return Object.entries(por).map(([obra, caps]) => ({ obra, caps }));
 }

@@ -1,9 +1,8 @@
-// API para el bot de Discord. Se autentica con: Authorization: Bearer <BOT_API_KEY>
+// API para el bot de Discord (solo consultas: las acciones se hacen en el panel). Se autentica con: Authorization: Bearer <BOT_API_KEY>
 import { fallo, json, iguales, discordId, entero, ROLES, tokenAleatorio, ahoraISO, config } from "./util.js";
-import { perfil, tareasDe, ranking, mercado, tomarTarea, entregarTarea, solicitar, filtrarMercado, filtrarRanking } from "./tareas.js";
+import { perfil, tareasDe, ranking, mercado, filtrarMercado, filtrarRanking, faltanRaws } from "./tareas.js";
 import { leerPermisos, permisosDe } from "./permisos.js";
 import { liberarTareasDe } from "./admin.js";
-import { subir } from "./archivos.js";
 
 async function staffPorDiscord(env, id) {
   const s = await env.DB.prepare("SELECT * FROM staff WHERE discord_id = ?").bind(discordId(id)).first();
@@ -16,13 +15,6 @@ export async function rutasBot(req, env, ruta, url) {
   if (!env.BOT_API_KEY || !iguales(clave, env.BOT_API_KEY)) fallo("Clave del bot inválida", 401);
   const m = req.method;
   const q = (k) => url.searchParams.get(k);
-  // Subir un archivo adjunto en Discord a la tarea (antes de cd!entregar). El cuerpo es el archivo.
-  if (ruta === "subir" && m === "PUT") {
-    const s = await staffPorDiscord(env, q("discord_id"));
-    const t = await env.DB.prepare("SELECT * FROM tareas WHERE id = ? AND staff_id = ? AND estado = 'activa'").bind(entero(q("tarea_id"), "tarea_id", 1, 1e9), s.id).first();
-    if (!t) fallo("No tienes una tarea activa con ese número", 404);
-    return json(await subir(req, env, s, permisosDe(s, leerPermisos(await config(env))), t.capitulo_id, t.rol, q("nombre")));
-  }
   const body = m === "POST" ? await req.json().catch(() => ({})) : {};
 
   // Permisos de quien escribe el comando (pide = ID de Discord del autor)
@@ -50,18 +42,11 @@ export async function rutasBot(req, env, ruta, url) {
     const caps = filtrarMercado(await mercado(env, s), puedo);
     return json(caps.filter((c) => ROLES.some((r) => c.roles[r].estado === "libre")));
   }
-  if (ruta === "tomar" && m === "POST") {
-    const { s, puedo } = await permisosDePide(body.discord_id);
-    exigeBot(puedo, "tomar_tareas");
-    return json(await tomarTarea(env, s, entero(body.capitulo_id, "capitulo_id", 1, 1e9), String(body.rol), "discord"));
-  }
-  if (ruta === "entregar" && m === "POST") {
-    const s = await staffPorDiscord(env, body.discord_id);
-    return json(await entregarTarea(env, s, entero(body.tarea_id, "tarea_id", 1, 1e9)));
-  }
-  if (ruta === "solicitar" && m === "POST") {
-    const s = await staffPorDiscord(env, body.discord_id);
-    return json(await solicitar(env, s, entero(body.tarea_id, "tarea_id", 1, 1e9), body.tipo, Number(body.dias), body.motivo));
+  // Capítulos sin RAW en el panel (para saber qué RAWs hay que subir)
+  if (ruta === "faltan-raws" && m === "GET") {
+    const { puedo } = await permisosDePide(q("pide"));
+    exigeBot(puedo, "ver_mercado");
+    return json(await faltanRaws(env));
   }
   // Enlace de un solo uso (30 min) para crear o cambiar la contraseña del panel; el bot lo manda por DM
   if (ruta === "enlace-acceso" && m === "POST") {

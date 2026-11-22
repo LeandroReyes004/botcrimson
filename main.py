@@ -1,7 +1,7 @@
 """
 CrimsonScan bot — asistente de Discord del panel de Crimson Scan.
-Los avisos de tareas, vencimientos y el reporte diario a líderes los manda el panel (Cloudflare)
-por webhook; el bot responde comandos y mantiene sincronizada la lista de staff.
+El bot es solo para CONSULTAR: tomar, entregar y subir archivos se hace en el panel web.
+Los avisos y el reporte diario a líderes los manda el panel por webhook; el bot también mantiene la lista de staff.
 """
 import os
 import logging
@@ -22,12 +22,7 @@ intents.members = True  # necesario para saber quién está en el servidor
 bot = commands.Bot(command_prefix="cd!", intents=intents, help_command=None, case_insensitive=True)
 api = PanelAPI()
 COLOR = 0x660000
-ROLES = {"trad": "Traducción", "clean": "Limpieza", "type": "Typeo"}
-ALIAS_ROL = {
-    "trad": "trad", "traduccion": "trad", "traducción": "trad", "tl": "trad",
-    "clean": "clean", "cleaner": "clean", "limpieza": "clean", "cl": "clean",
-    "type": "type", "typer": "type", "typeo": "type", "ts": "type",
-}
+PANEL = os.getenv("PANEL_URL", "").rstrip("/")
 
 
 def emoji_tiempo(t):
@@ -74,16 +69,19 @@ async def on_member_remove(member):
 
 # ───────────────────────── Comandos ─────────────────────────
 
+@bot.command(name="tomar", aliases=["entregar", "extension", "extensión"])
+async def solo_panel(ctx, *_):
+    await ctx.send(f"🔒 Eso ahora se hace en el panel: {PANEL}\nAquí solo se consulta (`cd!help`).")
+
+
 @bot.command(name="help", aliases=["ayuda"])
 async def ayuda(ctx):
     e = discord.Embed(title="📚 Comandos de Crimson Scan", color=COLOR,
-                      description="Todo queda guardado en el panel web. Puedes usar el bot o la web, da igual.")
-    e.add_field(name="`cd!mis_tareas`", value="Tus tareas activas y cuánto tiempo te queda.", inline=False)
+                      description=f"Aquí solo se consulta. Para tomar, entregar o subir archivos entra al panel: {PANEL}")
+    e.add_field(name="`cd!mis_tareas`", value="Tus tareas activas, cuánto te queda y si ya tienen RAW.", inline=False)
     e.add_field(name="`cd!tareas @usuario`", value="Las tareas activas de otra persona.", inline=False)
-    e.add_field(name="`cd!mercado`", value="Capítulos con roles libres que puedes tomar.", inline=False)
-    e.add_field(name="`cd!tomar <id_capítulo> <rol>`", value="Tomar una tarea. Roles: trad, clean, type.", inline=False)
-    e.add_field(name="`cd!entregar <id_tarea>`", value="Entregar tu tarea. Adjunta tus archivos en el mismo mensaje (o súbelos antes en el panel).", inline=False)
-    e.add_field(name="`cd!extension <id_tarea> <días> [motivo]`", value="Pedir más tiempo a los líderes.", inline=False)
+    e.add_field(name="`cd!mercado`", value="Capítulos con roles libres.", inline=False)
+    e.add_field(name="`cd!raws`", value="Capítulos a los que todavía les falta subir la RAW.", inline=False)
     e.add_field(name="`cd!mi_perfil`", value="Tus puntos y cuota del mes.", inline=False)
     e.add_field(name="`cd!ranking`", value="Top del mes.", inline=False)
     e.add_field(name="`cd!acceso`", value="Te mando por privado un enlace para crear o cambiar tu contraseña del panel.", inline=False)
@@ -112,8 +110,9 @@ async def _mostrar_tareas(ctx, miembro):
             extra = f"\n⏳ Pidió +{t['solicitud_dias']} días"
         elif t.get("solicitud") == "cancelacion":
             extra = "\n⏳ Pidió cancelar"
+        raw = "📦 RAW lista" if t.get("raws") else "📭 Sin RAW todavía"
         e.add_field(name=f"#{t['id']} · {t['obra']} cap. {t['cap']} ({t['rol_nombre']})",
-                    value=f"{emoji_tiempo(t)} {t['restante']}{extra}", inline=False)
+                    value=f"{emoji_tiempo(t)} {t['restante']} · {raw}{extra}", inline=False)
     await ctx.send(embed=e)
 
 
@@ -128,40 +127,47 @@ async def mercado(ctx):
         libres = [r for r, x in c["roles"].items() if x["estado"] == "libre"]
         mias = [r for r in libres if c["roles"][r].get("puedo")]
         marca = "⭐ " if mias else ""
-        lineas.append(f"{marca}`{c['id']}` **{c['obra']}** cap. {c['numero']}: {', '.join(libres)}")
+        raw = " 📦" if c.get("raws") else ""
+        lineas.append(f"{marca}**{c['obra']}** cap. {c['numero']}{raw}: {', '.join(libres)}")
     texto = "\n".join(lineas)
     e = discord.Embed(title="🛒 Mercado de tareas", color=COLOR, description=texto[:4000])
-    e.set_footer(text="⭐ = hay un rol que puedes tomar · Usa cd!tomar <id> <rol>")
+    e.set_footer(text="⭐ = hay un rol que puedes tomar · Tómalo en el panel")
     await ctx.send(embed=e)
 
 
-@bot.command(name="tomar")
-async def tomar(ctx, capitulo_id: int, rol: str):
-    clave = ALIAS_ROL.get(rol.lower())
-    if not clave:
-        await ctx.send("Rol desconocido. Usa: trad, clean o type.")
+
+
+@bot.command(name="raws", aliases=["faltan_raws"])
+async def raws(ctx):
+    obras = await api.faltan_raws(ctx.author.id)
+    if not obras:
+        await ctx.send("✅ Todos los capítulos en proceso ya tienen su RAW en el panel.")
         return
-    t = await api.tomar(ctx.author.id, capitulo_id, clave)
-    await ctx.send(f"📌 Tarea **#{t['id']}** tomada: {t['obra']} cap. {t['cap']} ({t['rol_nombre']}). {t['restante']}.")
-
-
-@bot.command(name="entregar")
-async def entregar(ctx, tarea_id: int):
-    # Si el mensaje trae archivos adjuntos, se suben como el trabajo de la tarea antes de entregar
-    adjuntos = ctx.message.attachments
-    if adjuntos:
-        aviso = await ctx.send(f"⏫ Subiendo {len(adjuntos)} archivo(s)…")
-        for a in adjuntos:
-            await api.subir(ctx.author.id, tarea_id, a.filename, await a.read())
-        await aviso.edit(content=f"⏫ Subidos {len(adjuntos)} archivo(s).")
-    t = await api.entregar(ctx.author.id, tarea_id)
-    await ctx.send(f"✅ ¡Entregada! {t['obra']} cap. {t['cap']} ({t['rol_nombre']}).")
-
-
-@bot.command(name="extension", aliases=["extensión"])
-async def extension(ctx, tarea_id: int, dias: int, *, motivo: str = None):
-    await api.solicitar(ctx.author.id, tarea_id, "extension", dias, motivo)
-    await ctx.send(f"📨 Pediste {dias} días más para la tarea #{tarea_id}. Los líderes lo revisarán.")
+    def rangos(caps):
+        # 1,2,3,5 -> "1–3, 5" (solo junta enteros seguidos)
+        out, ini, prev = [], None, None
+        for c in caps:
+            try:
+                n = float(c)
+            except ValueError:
+                n = None
+            if ini is not None and n is not None and prev is not None and n == prev + 1 and n.is_integer():
+                prev = n
+                continue
+            if ini is not None:
+                out.append(ini if ini == fmt(prev) else f"{ini}–{fmt(prev)}")
+            ini, prev = c, n
+        if ini is not None:
+            out.append(ini if ini == fmt(prev) else f"{ini}–{fmt(prev)}")
+        return ", ".join(out)
+    def fmt(n):
+        return "" if n is None else (str(int(n)) if float(n).is_integer() else str(n))
+    total = sum(len(o["caps"]) for o in obras)
+    e = discord.Embed(title=f"📭 Faltan RAWs: {total} capítulos", color=COLOR,
+                      description="Súbelas en el panel: Proyectos → la obra → Subir RAWs.")
+    for o in obras[:25]:
+        e.add_field(name=f"{o['obra']} ({len(o['caps'])})", value=rangos(o["caps"])[:1024], inline=False)
+    await ctx.send(embed=e)
 
 
 @bot.command(name="mi_perfil", aliases=["perfil"])
